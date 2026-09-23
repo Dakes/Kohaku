@@ -14,11 +14,14 @@ context: |
   server-rendered HTML (no frontend framework, no npm), one CSS + small vanilla JS +
   PoW web worker embedded in the binary. Single static musl binary in a distroless
   static nonroot image, published to Docker Hub by GitHub Actions on bare semver tags (1.0.0, no v prefix).
-  Builds must work with rustup and with the Nix flake devShell.
+  Builds must work with rustup and with the Nix flake devShell (no nodejs in the
+  devShell; OpenSpec comes from nixpkgs).
 
   Conventions: #![forbid(unsafe_code)]; every crate justified in docs/dependencies.md;
-  cargo audit + cargo deny in CI; clippy -D warnings; all admin routes covered by the
-  route security matrix test; plain-text email only.
+  cargo deny check (advisories, licenses, bans, sources) in CI, no cargo-audit;
+  clippy -D warnings; all admin routes covered by the route security matrix test;
+  plain-text email only. docs/plans/2026-09-23-security-review.md records why each
+  security rule in the design exists.
 
 rules:
   proposal:
