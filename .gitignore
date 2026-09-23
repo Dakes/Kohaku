@@ -1,0 +1,38 @@
+# Rust build output (Cargo.lock is committed: this is a binary)
+/target/
+
+# Nix
+/result
+/result-*
+.direnv/
+
+# Local runtime data and config (may hold secrets or reporter data)
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+/kohaku.toml
+/secrets/
+.env
+.env.*
+!.env.example
+
+# Fuzzing
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
+# Downloaded third-party documentation (reference only, not ours)
+/docs/vendor/
+
+# Claude Code per-user settings (shared skills/commands stay tracked)
+.claude/settings.local.json
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

@@ -1,0 +1,35 @@
+schema: spec-driven
+
+context: |
+  Kohaku: a tiny self-hosted, open-source bug report inbox. Public, unauthenticated
+  report forms per project; reports are moderated (private until approved); admin +
+  invited maintainers with per-project grants. Full design and decisions log:
+  docs/plans/2026-09-23-kohaku-design.md (authoritative until captured in specs).
+
+  Principles, in priority order: security first (public untrusted input), minimal
+  resources, minimal dependencies, boring and auditable code.
+
+  Tech stack: Rust stable (pinned in rust-toolchain.toml), axum + tokio, rusqlite
+  (bundled, WAL, STRICT tables, migrations via PRAGMA user_version), askama
+  server-rendered HTML (no frontend framework, no npm), one CSS + small vanilla JS +
+  PoW web worker embedded in the binary. Single static musl binary in a distroless
+  static nonroot image, published to Docker Hub by GitHub Actions on bare semver tags (1.0.0, no v prefix).
+  Builds must work with rustup and with the Nix flake devShell.
+
+  Conventions: #![forbid(unsafe_code)]; every crate justified in docs/dependencies.md;
+  cargo audit + cargo deny in CI; clippy -D warnings; all admin routes covered by the
+  route security matrix test; plain-text email only.
+
+rules:
+  proposal:
+    - Include a "Non-goals" section
+    - List any new crate with a one-line justification, or state "no new dependencies"
+    - Include a "Security considerations" section naming attacker, surface and mitigations
+  specs:
+    - Every requirement touching untrusted input must have at least one abuse scenario (WHEN attacker ... THEN ...)
+    - State limits as concrete numbers (sizes, counts, durations), not "reasonable"
+  design:
+    - Justify any deviation from docs/plans/2026-09-23-kohaku-design.md explicitly
+  tasks:
+    - Each task leaves the tree compiling with tests passing
+    - Tests are written alongside (or before) the code they cover, never as a final batch
