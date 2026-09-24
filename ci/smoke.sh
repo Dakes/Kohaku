@@ -48,13 +48,17 @@ docker build --quiet --platform linux/amd64 -t "$image" "$root" >/dev/null
 entrypoint=$(docker inspect --format '{{json .Config.Entrypoint}}' "$image")
 [ "$entrypoint" = "null" ] || fail "the image declares an ENTRYPOINT: $entrypoint"
 
-# An unedited template never runs: compose refuses empty secrets.
-cp "$root/.env.example" "$work/.env.template"
-if docker compose --project-name "$project" --project-directory "$work" --env-file "$work/.env.template" \
-    -f "$work/docker-compose.yml" config --quiet 2>"$work/err"; then
-    fail "compose accepted the unedited .env.example"
-fi
-grep -q KOHAKU_SECRET "$work/err" || fail "the refusal does not name KOHAKU_SECRET"
+# An unedited template never runs: compose refuses each empty secret. Older Compose
+# names only the first one it meets, so each is checked with the other filled in.
+for missing in KOHAKU_SECRET KOHAKU_SMTP_PASSWORD; do
+    grep -v -e '^KOHAKU_SECRET=' -e '^KOHAKU_SMTP_PASSWORD=' "$root/.env.example" > "$work/.env.template"
+    printf 'KOHAKU_SECRET=filled\nKOHAKU_SMTP_PASSWORD=filled\n%s=\n' "$missing" >> "$work/.env.template"
+    if docker compose --project-name "$project" --project-directory "$work" --env-file "$work/.env.template" \
+        -f "$work/docker-compose.yml" config --quiet 2>"$work/err"; then
+        fail "compose accepted .env.example with $missing empty"
+    fi
+    grep -q "$missing" "$work/err" || fail "the refusal does not name $missing"
+done
 
 wait_healthy() {
     for _ in $(seq 1 90); do
