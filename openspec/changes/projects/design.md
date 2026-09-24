@@ -35,6 +35,8 @@ projects WHERE public_host IS NOT NULL` plus the main host, and swaps the `Arc`.
 handlers call it after their transaction commits. The watcher connection (a dedicated
 read-only connection, not one of the 4 readers) polls `PRAGMA data_version` every 2 s and
 rebuilds when it changes; a failed rebuild keeps the old map and logs once per minute.
+Handlers rebuild on the same connection, one rebuild at a time, so a read taken before a
+commit can never replace a map built after it.
 
 **D5. Canonical redirect.** A main-router route `/p/{slug}` and `/p/{slug}/{*rest}` for GET
 and HEAD: look the slug up in an in-memory `slug → public_host` table built with the host

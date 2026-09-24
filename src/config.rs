@@ -54,8 +54,9 @@ pub enum Config {
     Serve(ServeConfig),
     /// `backup` and `admin unlock`.
     Secret(SecretConfig),
-    /// `admin reset-password`, which prints a link.
-    ResetLink(ResetLinkConfig),
+    /// `admin reset-password`, which prints a link, and `project create`, which needs
+    /// the main host.
+    Links(LinkConfig),
     None,
 }
 
@@ -72,7 +73,7 @@ pub struct SecretConfig {
     pub secret: InstanceSecret,
 }
 
-pub struct ResetLinkConfig {
+pub struct LinkConfig {
     pub secret: InstanceSecret,
     pub base_url: BaseUrl,
 }
@@ -160,7 +161,9 @@ impl Config {
             Command::Backup(_) | Command::AdminUnlock(_) => {
                 reader.secret_only().map(Config::Secret)
             }
-            Command::AdminResetPassword(_) => reader.reset_link().map(Config::ResetLink),
+            Command::AdminResetPassword(_) | Command::ProjectCreate(_) => {
+                reader.links().map(Config::Links)
+            }
             Command::Restore(_) | Command::RestoreList | Command::Healthcheck => Some(Config::None),
         };
         match config {
@@ -282,11 +285,11 @@ where
         Some(SecretConfig { secret })
     }
 
-    fn reset_link(&mut self) -> Option<ResetLinkConfig> {
+    fn links(&mut self) -> Option<LinkConfig> {
         let secret = self.secret();
         let base_url =
             self.required_not_placeholder(BASE_URL, placeholders::BASE_URL, parse_base_url);
-        Some(ResetLinkConfig {
+        Some(LinkConfig {
             secret: secret?,
             base_url: base_url?,
         })
@@ -1171,7 +1174,15 @@ mod tests {
             (SECRET, TEST_SECRET),
             (BASE_URL, "https://kohaku.example.org"),
         ]);
-        assert!(matches!(load(&reset, &valid), Ok(Config::ResetLink(_))));
+        assert!(matches!(load(&reset, &valid), Ok(Config::Links(_))));
+        let project = Command::ProjectCreate(crate::projects::commands::CreateArgs {
+            slug: "demo".into(),
+            name: "Demo".into(),
+            host: None,
+        });
+        assert_eq!(names(&project, &env(&[(SECRET, TEST_SECRET)])), [BASE_URL]);
+        assert_eq!(names(&project, &empty), [SECRET, BASE_URL]);
+        assert!(matches!(load(&project, &valid), Ok(Config::Links(_))));
     }
 
     #[test]

@@ -24,8 +24,10 @@ pub mod limits;
 pub mod logging;
 pub mod mail;
 pub mod pages;
+pub mod projects;
 pub mod routing;
 pub mod serve;
+pub mod text;
 pub mod time;
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ use crate::db::backup::{
 };
 use crate::healthcheck::Unhealthy;
 use crate::logging::{self, Stream};
+use crate::projects::commands::{CreateArgs, ProjectCommandError};
 use crate::routing::urls::Urls;
 use crate::serve::{Listen, MailerChoice, ServeError, serve};
 
@@ -35,6 +36,8 @@ Usage:
                             End an account's sign-in lock
   kohaku admin reset-password --email <address>
                             Print a one-hour password reset link for an account
+  kohaku project create <slug> --name <name> [--host <host>]
+                            Create a project, optionally with its custom domain
   kohaku --version          Print the version
   kohaku --help             Print this help
   kohaku <command> --help   Print this help
@@ -76,6 +79,7 @@ pub enum Command {
     /// The email address as given; normalized when looked up.
     AdminUnlock(String),
     AdminResetPassword(String),
+    ProjectCreate(CreateArgs),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -135,6 +139,32 @@ where
             )))),
             _ => Err(UsageError),
         },
+        [name, subcommand, rest @ ..] if *name == "project" && *subcommand == "create" => {
+            let value = |arg: &&OsStr| !arg.as_encoded_bytes().starts_with(b"-");
+            let args = |slug: &OsStr, name: &OsStr, host: Option<&OsStr>| {
+                Invocation::Run(Command::ProjectCreate(CreateArgs {
+                    slug: slug.to_owned(),
+                    name: name.to_owned(),
+                    host: host.map(OsStr::to_owned),
+                }))
+            };
+            match rest {
+                _ if command_help(rest) => Ok(Invocation::Help),
+                [slug, flag, name] if *flag == "--name" && value(slug) && value(name) => {
+                    Ok(args(slug, name, None))
+                }
+                [slug, flag, name, host_flag, host]
+                    if *flag == "--name"
+                        && *host_flag == "--host"
+                        && value(slug)
+                        && value(name)
+                        && value(host) =>
+                {
+                    Ok(args(slug, name, Some(host)))
+                }
+                _ => Err(UsageError),
+            }
+        }
         [name, subcommand, rest @ ..] if *name == "admin" => {
             let command: fn(String) -> Command = if *subcommand == "unlock" {
                 Command::AdminUnlock
@@ -204,6 +234,7 @@ pub enum CommandError {
     Runtime(std::io::Error),
     Unhealthy(Unhealthy),
     Account(AccountCommandError),
+    Project(ProjectCommandError),
     /// Writing the reset link to stdout failed.
     Output(std::io::Error),
 }
@@ -219,6 +250,7 @@ impl fmt::Display for CommandError {
             CommandError::Runtime(error) => write!(f, "cannot start the runtime: {}", error.kind()),
             CommandError::Unhealthy(error) => error.fmt(f),
             CommandError::Account(error) => error.fmt(f),
+            CommandError::Project(error) => error.fmt(f),
             CommandError::Output(error) => write!(f, "cannot write to stdout: {}", error.kind()),
         }
     }
@@ -287,7 +319,7 @@ where
             unlock(data, &config.secret, &email, crate::time::now_unix())
                 .map_err(CommandError::Account)
         }
-        (Command::AdminResetPassword(email), Config::ResetLink(config)) => {
+        (Command::AdminResetPassword(email), Config::Links(config)) => {
             let urls = Urls::new(&config.base_url);
             let link = reset_password(data, &config.secret, &urls, &email, crate::time::now_unix())
                 .map_err(CommandError::Account)?;
@@ -296,11 +328,20 @@ where
                 .and_then(|()| stdout.flush())
                 .map_err(CommandError::Output)
         }
+        (Command::ProjectCreate(args), Config::Links(config)) => crate::projects::commands::create(
+            data,
+            &config.secret,
+            &config.base_url,
+            &args,
+            crate::time::now_unix(),
+        )
+        .map_err(CommandError::Project),
         (
             Command::Serve
             | Command::Backup(_)
             | Command::AdminUnlock(_)
-            | Command::AdminResetPassword(_),
+            | Command::AdminResetPassword(_)
+            | Command::ProjectCreate(_),
             _,
         ) => {
             unreachable!("Config::load returns the configuration its command needs")
@@ -391,6 +432,30 @@ mod tests {
                 "{command} --help"
             );
         }
+        assert_eq!(p(&["project", "create", "--help"]), Ok(Help));
+        let create = |slug: &str, name: &str, host: Option<&str>| {
+            Ok(Run(Command::ProjectCreate(CreateArgs {
+                slug: slug.into(),
+                name: name.into(),
+                host: host.map(OsString::from),
+            })))
+        };
+        assert_eq!(
+            p(&["project", "create", "demo", "--name", "Demo app"]),
+            create("demo", "Demo app", None)
+        );
+        assert_eq!(
+            p(&[
+                "project",
+                "create",
+                "Demo",
+                "--name",
+                "",
+                "--host",
+                "Bugs.example.net"
+            ]),
+            create("Demo", "", Some("Bugs.example.net"))
+        );
     }
 
     #[test]
@@ -433,6 +498,49 @@ mod tests {
             &["admin", "frobnicate"],
             &["admin", "reset-password"],
             &["admin", "reset_password", "--email", "a@b.test"],
+            &["project"],
+            &["project", "--help"],
+            &["project", "create"],
+            &["project", "create", "demo"],
+            &["project", "create", "demo", "--name"],
+            &["project", "create", "--name", "Demo"],
+            &["project", "create", "demo", "Demo"],
+            &["project", "create", "demo", "--name", "Demo", "extra"],
+            &["project", "create", "demo", "--name", "Demo", "--host"],
+            &[
+                "project",
+                "create",
+                "demo",
+                "--host",
+                "a.example",
+                "--name",
+                "Demo",
+            ],
+            &[
+                "project",
+                "create",
+                "demo",
+                "--name",
+                "Demo",
+                "--host",
+                "a.example",
+                "x",
+            ],
+            &["project", "create", "demo", "--name", "--host", "a.example"],
+            &["project", "create", "-demo", "--name", "Demo"],
+            &["project", "create", "demo", "--NAME", "Demo"],
+            &[
+                "project",
+                "create",
+                "demo",
+                "--name",
+                "Demo",
+                "--HOST",
+                "a.example",
+            ],
+            &["project", "Create", "demo", "--name", "Demo"],
+            &["project", "delete", "demo"],
+            &["projects", "create", "demo", "--name", "Demo"],
         ];
         for args in malformed {
             assert_eq!(p(args), Err(UsageError), "{args:?}");
@@ -464,6 +572,7 @@ mod tests {
             "kohaku restore --list",
             "kohaku admin unlock --email <address>",
             "kohaku admin reset-password --email <address>",
+            "kohaku project create <slug> --name <name> [--host <host>]",
             "kohaku --version",
             "kohaku --help",
             "kohaku <command> --help",

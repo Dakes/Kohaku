@@ -1,0 +1,32 @@
+{% extends "admin_base.html" %}
+{% block title %}Projects{% endblock %}
+{% block admin %}
+<h1>Projects</h1>
+{%- if projects.is_empty() %}
+<p>No projects yet.</p>
+{%- else %}
+<table class="list">
+<thead><tr><th>Slug</th><th>Name</th><th>Custom domain</th></tr></thead>
+<tbody>
+{%- for project in projects %}
+<tr><td><a href="/admin/p/{{ project.slug }}/settings">{{ project.slug }}</a></td><td>{{ project.settings.name }}</td><td>{% if let Some(host) = project.settings.public_host %}{{ host }}{% endif %}</td></tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+
+<h2>New project</h2>
+{%- if let Some(error) = error %}
+<p class="error" role="alert">{{ error }}</p>
+{%- endif %}
+<form method="post" action="/admin/projects" class="stacked">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+<label for="slug">Slug: a-z, 0-9 and '-', at most 40 characters. It cannot be changed later.</label>
+<input id="slug" name="slug" value="{{ form.slug }}" required maxlength="40" pattern="[a-z0-9][a-z0-9\-]*" autocomplete="off" spellcheck="false">
+<label for="name">Name</label>
+<input id="name" name="name" value="{{ form.name }}" required maxlength="80" autocomplete="off">
+<label for="public_host">Custom domain (optional; point its DNS at this server first)</label>
+<input id="public_host" name="public_host" value="{{ form.public_host }}" maxlength="253" autocomplete="off" spellcheck="false">
+<button type="submit">Create the project</button>
+</form>
+{% endblock %}

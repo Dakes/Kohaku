@@ -33,6 +33,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0002_admin_auth",
         sql: include_str!("../../migrations/0002_admin_auth.sql"),
     },
+    Migration {
+        version: 3,
+        name: "0003_projects",
+        sql: include_str!("../../migrations/0003_projects.sql"),
+    },
 ];
 
 /// Pre-migration copies kept after a new one is written.

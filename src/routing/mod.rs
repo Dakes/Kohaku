@@ -27,7 +27,7 @@ use urls::Urls;
 pub struct App {
     pub base_url: BaseUrl,
     pub trusted_proxies: TrustedProxies,
-    pub host_map: SharedHostMap,
+    pub host_map: Arc<SharedHostMap>,
     pub urls: Urls,
     pub limiter: Limiter,
     pub mail_budget: MailBudget,
@@ -51,7 +51,7 @@ impl App {
         Ok(App {
             base_url: config.base_url.clone(),
             trusted_proxies: config.trusted_proxies.clone(),
-            host_map: SharedHostMap::new(HostMap::new(&config.base_url)),
+            host_map: Arc::new(SharedHostMap::new(HostMap::new(&config.base_url))),
             urls: Urls::new(&config.base_url),
             limiter: Limiter::new(clock.now()),
             mail_budget: MailBudget::new(config.public_mail_per_hour),

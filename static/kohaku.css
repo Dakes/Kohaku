@@ -78,9 +78,33 @@ form.stacked {
 }
 
 input,
+textarea,
 button {
   font: inherit;
   padding: 0.4rem 0.6rem;
+}
+
+fieldset {
+  display: grid;
+  gap: 0.25rem;
+  border: 1px solid var(--line);
+}
+
+table.list {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.list th,
+table.list td {
+  padding: 0.3rem 0.5rem 0.3rem 0;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+button.danger {
+  color: #b3261e;
 }
 
 button {

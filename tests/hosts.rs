@@ -5,16 +5,21 @@ mod support;
 use axum::body::Body;
 use axum::http::StatusCode;
 use kohaku::assets;
-use kohaku::routing::hosts::{HostMap, ProjectId};
+use kohaku::routing::hosts::{HostEntry, refresh};
 use support::*;
 
 const PROJECT_HOST: &str = "bugs.example.net";
 
-fn with_project(harness: &Harness) {
+/// Project `a` on [`PROJECT_HOST`] and project `b` without a host, as real rows.
+async fn with_project(harness: &Harness) {
     harness
-        .app
-        .host_map
-        .replace(HostMap::new(&harness.app.base_url).with_project(PROJECT_HOST, ProjectId(1)));
+        .exec(
+            "INSERT INTO projects (slug, name, public_host, created_at)
+             VALUES ('a', 'Project A', 'bugs.example.net', 1), ('b', 'Project B', NULL, 1)",
+            vec![],
+        )
+        .await;
+    refresh(&harness.app).await.unwrap();
 }
 
 fn stylesheet() -> &'static str {
@@ -200,7 +205,7 @@ async fn probes_around_the_internal_endpoints() {
 #[tokio::test]
 async fn tls_ask_answers_only_for_project_hosts() {
     let harness = Harness::new();
-    with_project(&harness);
+    with_project(&harness).await;
     let ask = |query: &'static str| {
         let harness = &harness;
         async move {
@@ -285,6 +290,7 @@ async fn attacker_probes_for_the_admin_area() {
 #[tokio::test]
 async fn landing_page_reflects_nothing() {
     let harness = Harness::new();
+    with_project(&harness).await;
     let plain = body_text(harness.get(MAIN_HOST, "/").await).await;
     let response = harness
         .send(
@@ -301,6 +307,9 @@ async fn landing_page_reflects_nothing() {
     );
     assert!(header_values(&response, "set-cookie").is_empty());
     assert_eq!(body_text(response).await, plain);
+    for data in ["Project", "bugs.example.net", "/p/"] {
+        assert!(!plain.contains(data), "{data}");
+    }
 }
 
 #[tokio::test]
@@ -320,20 +329,74 @@ async fn post_to_the_landing_page_gets_405() {
 #[tokio::test]
 async fn project_host_serves_no_other_project_or_admin_area() {
     let harness = Harness::new();
-    with_project(&harness);
-    for path in ["/p/b", "/p/b/api/v1/reports", "/admin", "/admin/login", "/"] {
-        assert_eq!(
-            harness.get(PROJECT_HOST, path).await.status(),
-            StatusCode::NOT_FOUND,
+    with_project(&harness).await;
+    let a: i64 = harness
+        .count("SELECT id FROM projects WHERE slug = 'a'")
+        .await;
+    assert_eq!(
+        harness.app.host_map.current().get(PROJECT_HOST),
+        Some(HostEntry::Project(kohaku::routing::hosts::ProjectId(a)))
+    );
+    for path in [
+        "/p/b",
+        "/p/b/api/v1/reports",
+        "/p/a",
+        "/admin",
+        "/admin/login",
+        "/admin/projects",
+        "/admin/p/a/settings",
+        "/admin/reset",
+        "/",
+    ] {
+        let response = harness.get(PROJECT_HOST, path).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        let body = body_text(response).await;
+        assert!(
+            !body.contains("Project B") && !body.contains("Project A"),
             "{path}"
         );
     }
+    assert_eq!(
+        harness.get(PROJECT_HOST, stylesheet()).await.status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn main_host_serves_projects_only_through_the_redirect() {
+    let harness = Harness::new();
+    with_project(&harness).await;
+    let reference = body_text(harness.get(MAIN_HOST, "/does-not-exist").await).await;
+    // Project b has no host: its paths answer like any unmatched path.
+    for path in [
+        "/p/b",
+        "/p/b/",
+        "/p/b/r/1",
+        "/p/nothing",
+        "/p/a/api/v1/reports",
+        "/p/",
+    ] {
+        let response = harness.get(MAIN_HOST, path).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(
+            header_values(&response, "cache-control"),
+            ["no-store"],
+            "{path}"
+        );
+        assert_eq!(body_text(response).await, reference, "{path}");
+    }
+    let response = harness.get(MAIN_HOST, "/p/a").await;
+    assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        header_values(&response, "location"),
+        ["https://bugs.example.net/"]
+    );
 }
 
 #[tokio::test]
 async fn stylesheet_on_both_hosts() {
     let harness = Harness::new();
-    with_project(&harness);
+    with_project(&harness).await;
     let main = harness.get(MAIN_HOST, stylesheet()).await;
     let project = harness.get(PROJECT_HOST, stylesheet()).await;
     for response in [&main, &project] {
@@ -371,7 +434,7 @@ async fn stale_or_traversal_paths_get_404() {
 #[tokio::test]
 async fn no_cookies_even_for_a_forged_one() {
     let harness = Harness::new();
-    with_project(&harness);
+    with_project(&harness).await;
     for (host, path) in [
         (MAIN_HOST, "/"),
         (MAIN_HOST, stylesheet()),
@@ -414,7 +477,7 @@ async fn unknown_hosts_are_counted() {
 #[tokio::test]
 async fn release_build_serves_no_development_route() {
     let harness = Harness::new();
-    with_project(&harness);
+    with_project(&harness).await;
     for host in [MAIN_HOST, PROJECT_HOST] {
         for path in ["/dev/boot-id", "/static/dev-reload.js"] {
             assert_eq!(

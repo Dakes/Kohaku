@@ -123,6 +123,9 @@ pub async fn serve(
         .await
         .expect("hashing does not panic");
     dummy.map_err(ServeError::Random)?;
+    crate::routing::hosts::refresh(&app)
+        .await
+        .map_err(|failure| ServeError::Database(MigrateError::Database(failure)))?;
     tracing::info!(
         "KOHAKU_PUBLIC_MAIL_PER_HOUR is {}",
         config.public_mail_per_hour
@@ -148,8 +151,9 @@ pub async fn serve(
         Arc::clone(&app),
         data.clone(),
         KINDS,
-        stopped,
+        stopped.clone(),
     ));
+    let watcher = tokio::spawn(crate::routing::hosts::watch(Arc::clone(&app), stopped));
     tracing::info!("listening on port {}", address.port());
     on_listening(address);
 
@@ -161,6 +165,7 @@ pub async fn serve(
     crate::http::server::run(listener, service, Arc::clone(&app), shutdown).await;
     let _ = worker.await;
     let _ = jobs.await;
+    let _ = watcher.await;
     app.counters.flush();
     // The last handle closes every connection; SQLite then removes the WAL.
     drop(app);

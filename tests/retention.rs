@@ -8,7 +8,7 @@ use std::os::unix::fs::symlink;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use kohaku::db::migrate::{MIGRATIONS, Migration, open_and_prepare};
+use kohaku::db::migrate::{MIGRATIONS, open_and_prepare};
 use kohaku::jobs::{checkpoint, remove_stale_tmp, retention};
 use kohaku::mail::outbox::{KINDS, give_up};
 use kohaku::time::now_unix;
@@ -276,15 +276,8 @@ async fn only_public_writes_need_permits_and_failures_return_them() {
 #[tokio::test]
 async fn read_only_commands_and_background_work_record_nothing() {
     let (_dir, data) = data_dir();
-    let newer = [
-        MIGRATIONS[0],
-        Migration {
-            version: 2,
-            name: "0002_next",
-            sql: "CREATE TABLE next (id INTEGER PRIMARY KEY) STRICT;",
-        },
-    ];
-    let conn = open_and_prepare(&data, &secret(), MIGRATIONS, 1).unwrap();
+    // Schema 1 now, so the start below migrates.
+    let conn = open_and_prepare(&data, &secret(), &MIGRATIONS[..1], 1).unwrap();
     conn.execute_batch(&audit_at(now_unix())).unwrap();
     drop(conn);
     let entries = |data: &kohaku::db::DataDir| -> i64 {
@@ -294,7 +287,7 @@ async fn read_only_commands_and_background_work_record_nothing() {
     };
     assert_eq!(entries(&data), 1);
     // A migrating start, backups and the listing.
-    let conn = open_and_prepare(&data, &secret(), &newer, 2).unwrap();
+    let conn = open_and_prepare(&data, &secret(), MIGRATIONS, 2).unwrap();
     let db = Arc::new(kohaku::db::Db::new(conn, &data.database()).unwrap());
     let mut out = Vec::new();
     kohaku::db::backup::backup_to_writer(&data, &secret(), &mut out).unwrap();

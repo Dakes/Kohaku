@@ -26,7 +26,7 @@ pub enum RoutePath {
     Fallback,
 }
 
-/// Who may use a route. Later changes add the admin and project guards.
+/// Who may use a route. Later changes add the project guards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
     Public,
@@ -34,6 +34,9 @@ pub enum Access {
     /// `303` to the login page and other methods 403; with one, every state-changing
     /// request carries the session's CSRF token.
     Session,
+    /// `Session`, then the admin only: any other account gets the 404 of a nonexistent
+    /// path (change projects D2).
+    Admin,
 }
 
 /// `Cache-Control` of every response (http-security: Cache-Control classes).
@@ -44,6 +47,9 @@ pub enum CacheClass {
     /// `immutable` only on a 200 GET or HEAD serving a content-hashed asset, else
     /// `no-cache`.
     StaticAsset,
+    /// `max-age=3600` on a 308 to a project's custom domain (projects: Canonical
+    /// redirect to the custom domain), else `no-store`.
+    CanonicalRedirect,
 }
 
 /// The route's Content-Security-Policy.
@@ -201,6 +207,7 @@ pub fn table() -> Vec<Route> {
         },
     ];
     routes.extend(admin_routes());
+    routes.extend(project_routes());
     routes.extend(crate::dev::routes());
     routes
 }
@@ -210,7 +217,7 @@ const EXAMPLE_TOKEN: &str = "/admin/reset/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 /// The admin area (admin-auth; change admin-auth D3): main host only, `no-store`.
 fn admin_routes() -> Vec<Route> {
-    use crate::admin::{account, login, reset};
+    use crate::admin::{account, login, projects, reset};
     vec![
         Route {
             host: HostKind::Main,
@@ -380,6 +387,48 @@ fn admin_routes() -> Vec<Route> {
             rate: &[RateClass::Read, RateClass::Login],
             errors: ErrorFormat::Html,
         },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/projects"),
+            example: "/admin/projects".to_owned(),
+            methods: get(projects::list).post(projects::create),
+            access: Access::Admin,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/p/{slug}/settings"),
+            example: "/admin/p/demo/settings".to_owned(),
+            methods: get(projects::settings).post(projects::save),
+            access: Access::Admin,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/p/{slug}/delete"),
+            example: "/admin/p/demo/delete".to_owned(),
+            methods: post(projects::delete),
+            access: Access::Admin,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[],
+            errors: ErrorFormat::Html,
+        },
         // Unknown admin paths answer like known ones until signed in, then 404. A
         // catch-all never matches an empty rest, so `/admin/` has its own entry.
         Route {
@@ -411,4 +460,27 @@ fn admin_routes() -> Vec<Route> {
             errors: ErrorFormat::Html,
         },
     ]
+}
+
+/// `/p/{slug}/…` on the main host: the canonical redirect (projects; change projects
+/// D5). An empty rest does not match a catch-all, so `/p/{slug}/` has its own entry.
+fn project_routes() -> Vec<Route> {
+    ["/p/{slug}", "/p/{slug}/", "/p/{slug}/{*rest}"]
+        .into_iter()
+        .zip(["/p/demo", "/p/demo/", "/p/demo/r/12"])
+        .map(|(pattern, example)| Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern(pattern),
+            example: example.to_owned(),
+            methods: get(crate::projects::redirect::canonical).fallback(crate::pages::not_found),
+            access: Access::Public,
+            cache: CacheClass::CanonicalRedirect,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read],
+            errors: ErrorFormat::Html,
+        })
+        .collect()
 }

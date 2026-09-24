@@ -2,6 +2,7 @@
 //! check-and-consume helpers (data-storage; change foundation D7).
 
 pub mod backup;
+pub mod current;
 pub mod lock;
 pub mod migrate;
 pub mod paths;
@@ -76,16 +77,18 @@ pub fn create_file(path: &Path) -> io::Result<()> {
 }
 
 /// The connections of a `serve` process: one writer and [`READERS`] readers, each
-/// kind behind a semaphore so bursts wait asynchronously instead of parking threads.
+/// kind behind a semaphore so bursts wait asynchronously instead of parking threads,
+/// and the watcher, a reader of its own that builds the host map.
 pub struct Db {
     writer: Arc<Mutex<Connection>>,
     write_permits: Arc<Semaphore>,
     readers: Arc<Mutex<Vec<Connection>>>,
     read_permits: Arc<Semaphore>,
+    watcher: Arc<Mutex<Connection>>,
 }
 
 impl Db {
-    /// Takes the (already migrated) writer and opens the readers.
+    /// Takes the (already migrated) writer and opens the readers and the watcher.
     pub fn new(writer: Connection, path: &Path) -> rusqlite::Result<Db> {
         let readers = (0..READERS)
             .map(|_| open(path, Role::Reader))
@@ -95,6 +98,7 @@ impl Db {
             write_permits: Arc::new(Semaphore::new(1)),
             readers: Arc::new(Mutex::new(readers)),
             read_permits: Arc::new(Semaphore::new(READERS)),
+            watcher: Arc::new(Mutex::new(open(path, Role::Reader)?)),
         })
     }
 
@@ -139,6 +143,21 @@ impl Db {
             let _permit = permit;
             let conn = Pooled::take(&readers);
             work(conn.get())
+        })
+        .await
+    }
+
+    /// Runs `work` on the watcher connection; one caller at a time, so work that reads
+    /// and then publishes what it read cannot interleave with another such run.
+    pub async fn with_watcher<T, F>(&self, work: F) -> T
+    where
+        F: FnOnce(&Connection) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let watcher = Arc::clone(&self.watcher);
+        run_blocking(move || {
+            let conn = watcher.lock().unwrap_or_else(PoisonError::into_inner);
+            work(&conn)
         })
         .await
     }
