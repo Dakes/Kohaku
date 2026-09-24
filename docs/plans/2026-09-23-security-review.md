@@ -282,6 +282,7 @@ Covers:
 - Every MAC input starts with a purpose label and uses length-prefixed fields. Every check uses `Mac::verify_slice`.
 (2) One persistent secret: required `KOHAKU_SECRET_FILE` with ≥ 32 random bytes.
 - It ships as the Compose secret `secrets/kohaku_secret`. The README gives `head -c 32 /dev/urandom | base64 > secrets/kohaku_secret`.
+- **Superseded (owner, 2026-09-24):** the secret is the environment variable `KOHAKU_SECRET` in `.env` (mode 0600), like the SMTP password; there are no secret files.
 - It is never stored in the DB or /data.
 - The DB stores HMAC(secret, 'kohaku/keycheck'), and startup fails on a mismatch.
 (3) TOTP seeds are never stored. Each user has a random 16-byte `totp_nonce`, and seed = HMAC-SHA256(secret, 'kohaku/totp' ‖ user_id ‖ nonce)[..20]. Re-enrollment draws a new nonce. A leaked DB or backup alone cannot produce codes. A lost secret means `admin reset-2fa` for enrolled users (documented).

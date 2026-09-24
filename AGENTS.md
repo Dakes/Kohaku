@@ -84,7 +84,7 @@ until you've checked the whole path.
 
 **New key or MAC**
 - Add it to the design's key inventory. Prefer a per-boot key or a random value stored
-  hashed; derive from the instance secret (`KOHAKU_SECRET_FILE`) only when it must
+  hashed; derive from the instance secret (`KOHAKU_SECRET`) only when it must
   survive restarts, and make `admin rekey` reset what depends on it. Purpose label
   first, length-prefixed fields, `verify_slice`.
 
@@ -161,4 +161,5 @@ cargo deny check
 openspec validate --all --strict
 ```
 
-If the change affects pages or emails, also check them by hand (`just dev`, Mailpit).
+If the change affects pages or emails, also check them by hand with `just dev`, which
+prints every mail to the terminal instead of sending it.

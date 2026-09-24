@@ -74,20 +74,20 @@ mkdir kohaku && cd kohaku
 curl -fsSLO $R/compose.yaml
 curl -fsSLO $R/Caddyfile
 curl -fsSL  $R/.env.example -o .env
+chmod 600 .env                                # it holds your secrets
 
-$EDITOR .env                                  # KOHAKU_DOMAIN, mail sender, SMTP server
-mkdir -p secrets && chmod 700 secrets
-$EDITOR secrets/smtp_password
-head -c 32 /dev/urandom | base64 > secrets/kohaku_secret
-chmod 644 secrets/*                           # see below
+head -c 32 /dev/urandom | base64              # your new KOHAKU_SECRET
+$EDITOR .env                                  # domain, KOHAKU_SECRET, mail sender, SMTP
 
 docker compose up -d
 docker compose exec kohaku kohaku admin create --email you@example.org
 ```
 
-Compose mounts secret files with their host owner and mode (it ignores `uid`, `gid`
-and `mode` for them), so Kohaku, running as uid 65532, can only read them if they are
-world-readable. The 0700 `secrets/` directory keeps every other host user out.
+Kohaku sends mail through your provider's SMTP server (TLS required); it needs no mail
+server of its own. Put the SMTP password in single quotes (`KOHAKU_SMTP_PASSWORD='…'`)
+so Compose takes it literally. Both secrets are visible to anyone who can run `docker
+inspect` on the host, which only root and the `docker` group can, and they control the
+host anyway.
 
 `admin create` prints a single-use setup link, valid for one hour. Open it to set your
 password and enroll two-factor authentication; no password ever goes on the command
@@ -96,8 +96,8 @@ line.
 The install files come from the release tag, not `main`. `docker compose pull` updates
 the image but never these files; release notes say when they changed.
 
-**Keep `secrets/kohaku_secret` safe and back it up separately.** Kohaku refuses to
-start without it. If it is lost, create a new one and run `docker compose run --rm
+**Keep `KOHAKU_SECRET` safe and back it up separately** (e.g. in a password manager).
+Kohaku refuses to start without it. If it is lost, create a new one and run `docker compose run --rm
 kohaku kohaku admin rekey` with Kohaku stopped; everyone re-enrolls two-factor login.
 A backup only starts with the secret it was made with.
 
@@ -125,8 +125,8 @@ What the shipped `compose.yaml` does for you:
 - **Hardened containers:** read-only root filesystems, all capabilities dropped (Caddy
   keeps only the right to bind 80/443), `no-new-privileges`, non-root Kohaku, memory
   limits, healthcheck, size-capped logs. Certificates live in named volumes.
-- **Secrets as files** (`secrets/smtp_password`, `secrets/kohaku_secret`), never as
-  environment variables visible in `docker inspect`.
+- **No empty secrets:** `docker compose up` stops with a hint while `KOHAKU_SECRET` or
+  `KOHAKU_SMTP_PASSWORD` is empty.
 - **Safe updates:** the image is pinned to the major version (`dakes/kohaku:1`), so
   `docker compose pull && docker compose up -d` brings fixes but never a breaking
   release. Migrations run automatically at startup, after Kohaku saves a copy of the
@@ -147,8 +147,8 @@ proxy network, and don't let the proxy or a CDN cache `/admin`, `/p`, `/api` or
 screenshots. Proxy access logs contain one-time links and IP addresses; keep their
 retention short.
 
-**Backups:** one database file is the whole backup (keep `secrets/kohaku_secret`
-alongside it, stored separately). Kohaku streams a consistent snapshot while running;
+**Backups:** one database file is the whole backup (keep `KOHAKU_SECRET` alongside it,
+stored separately). Kohaku streams a consistent snapshot while running;
 copy the file off the host:
 
 ```sh
@@ -191,6 +191,10 @@ npm i -g @fission-ai/openspec@1.13.1     # the OpenSpec version the flake pins
 Elsewhere, also install `just`, `watchexec-cli` and `cargo-deny` with
 `cargo install --locked <crate>@=<version>` at the versions listed in
 `docs/dependencies.md` (the ones the flake provides).
+
+`just dev` runs Kohaku on http://localhost:8080 and reloads open pages after every
+change. It needs no mail server: development builds print every mail to the terminal
+instead of sending it.
 
 Specs come before code. To work on a feature:
 

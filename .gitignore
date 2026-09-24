@@ -13,7 +13,6 @@
 *.db-shm
 *.db-journal
 /kohaku.toml
-/secrets/
 .env
 .env.*
 !.env.example

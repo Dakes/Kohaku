@@ -31,7 +31,7 @@ backstop; a per-report me-too rate cap.
 | Anti-spam | PoW + honeypot + rate limits always; per-source pending cap; email OTP per project (optional). PoW is a cost, quotas and rate limits are the limits | Anonymous by default, stronger gate where wanted |
 | Admins | One admin bootstrapped by a CLI-printed single-use setup link + maintainers invited by email with per-project grants | No password on the command line; no password-only enrollment window |
 | Lockout | OWASP device cookie: after 10 failures only browsers without a device cookie from a prior login are locked | An attacker cannot lock the owner out |
-| Keys | Ephemeral per-boot keys by default; one external secret (`KOHAKU_SECRET_FILE`) derives TOTP seeds and source keys | A leaked DB or backup alone yields no TOTP codes and no reversible IP hashes |
+| Keys | Ephemeral per-boot keys by default; one external secret (`KOHAKU_SECRET`) derives TOTP seeds and source keys | A leaked DB or backup alone yields no TOTP codes and no reversible IP hashes |
 | Report content | Markdown (no raw HTML, no images), screenshots per project (off by default) | Owner request |
 | Screenshots | Decode in pure Rust, re-encode lossy WebP q80 via libwebp **encoder only**; libwebp decoding banned and enforced | Owner wants lossy WebP; untrusted encoded bytes never reach C (attacker-chosen pixel values still do) |
 | Screenshot storage | Re-encoded WebP as SQLite BLOBs, not files | Cascades, purge, erasure and backup cover images; no path handling |
@@ -74,12 +74,12 @@ reverse proxy (TLS) ──► kohaku (axum, HTTP :8080, non-root, distroless sta
 
 - Env vars (primary, Compose-friendly), optional TOML file. Never configurable via web
   UI.
-- Secrets come only from files (`KOHAKU_SECRET_FILE`, `KOHAKU_SMTP_PASSWORD_FILE`);
-  there is no plain `KOHAKU_SECRET` variable, so secrets never appear in `docker
-  inspect`. One trailing LF or CRLF is stripped; any other surrounding whitespace is an
-  error. An unreadable file fails startup with a message naming the path and uid 65532.
+- Secrets are environment variables like every other setting (`KOHAKU_SECRET`,
+  `KOHAKU_SMTP_PASSWORD`), kept in Compose's `.env` (mode 0600; owner decision: one
+  place for all settings). Never taken from arguments, never logged or echoed; errors
+  name the variable, never its value. Values are used exactly as given, never trimmed.
 - Required, no default: `KOHAKU_BASE_URL`, `KOHAKU_TRUSTED_PROXIES`,
-  `KOHAKU_SECRET_FILE` (see §5), SMTP settings. Startup fails on unchanged example
+  `KOHAKU_SECRET` (see §5), SMTP settings. Startup fails on unchanged example
   values.
 - `KOHAKU_BASE_URL` must be exactly `https://host[:port]`: no path, query or fragment.
   `http://localhost` only with the `dev` feature.
@@ -105,7 +105,7 @@ reverse proxy (TLS) ──► kohaku (axum, HTTP :8080, non-root, distroless sta
   admin role). Links are built from `KOHAKU_BASE_URL`.
 - `admin rekey` recovers from a lost secret, run with the service stopped (`docker
   compose run --rm kohaku kohaku admin rekey`). It is the only command that skips the
-  keycheck: with the new `KOHAKU_SECRET_FILE` it clears every user's `totp_nonce`,
+  keycheck: with the new `KOHAKU_SECRET` it clears every user's `totp_nonce`,
   `totp_last_step` and recovery codes, revokes all sessions, NULLs `source_key`, writes
   the new keycheck, audits with actor `cli` and prints setup links for users who were
   enrolled.
@@ -345,11 +345,11 @@ Violations get 422 (counted in characters unless stated).
 | Verified-email key | random per boot, memory only | verified-email token |
 | OTP key | random per boot, memory only | `email_codes` HMACs |
 | Me-too epoch key | random, memory only, rotated every 24 h | voter_hash |
-| Instance secret (`KOHAKU_SECRET_FILE`) | persistent, external file | derives `kohaku/totp` seeds, `kohaku/source` subkey, `kohaku/keycheck` |
+| Instance secret (`KOHAKU_SECRET`) | persistent, external (environment) | derives `kohaku/totp` seeds, `kohaku/source` subkey, `kohaku/keycheck` |
 | — (no key) | — | CSRF (random per session), unsubscribe (random token, stored hashed), device cookies, session and token-table tokens, recovery codes (SHA-256) |
 
-- `KOHAKU_SECRET_FILE` is required: base64 text decoding to ≥ 32 random bytes, shipped
-  as the Compose secret `secrets/kohaku_secret`. Never stored in the DB or `/data`.
+- `KOHAKU_SECRET` is required: base64 text decoding to ≥ 32 random bytes, set in
+  `.env`. Never stored in the DB or `/data`.
   `serve` and every command that uses the database fail if the `meta` keycheck does
   not match, except `restore` (it replaces the database) and `admin rekey`.
 - Every MAC input starts with a purpose label and uses length-prefixed fields. Every
@@ -716,8 +716,10 @@ project settings (admin), users/invites (admin; Reset 2FA), audit log (admin), a
 
 ## 9. Email
 
-lettre, TLS required, plain text only. Everything goes through `outbox`; the worker
-sends security mail first and retries 1m → 5m → 30m → 2h, then every 2 h, giving up
+lettre to an external SMTP server, verified TLS required, plain text only. A `dev`
+build sends nothing: it prints each mail in full to the terminal. Everything goes
+through `outbox`; the worker sends security mail first and retries 1m → 5m → 30m → 2h,
+then every 2 h, giving up
 after 24 h or at the row's `expires_at` (OTP mail expires with its code, 10 min).
 Subjects stripped of CR/LF, truncated; user text single-line, length-capped, marked as
 quoted.
@@ -772,14 +774,14 @@ quoted.
   ≥ 1.89), musl targets, clippy, rustfmt; bumped deliberately. Used by rustup
   (sandbox/CI) and by the flake via rust-overlay.
 - **Nix flake:** `devShells.default` (toolchain, just, watchexec, cargo-deny,
-  cargo-zigbuild, zig, sqlite, mailpit, `pkgs.openspec` 1.13.1 — no nodejs) and
+  cargo-zigbuild, zig, sqlite, `pkgs.openspec` 1.13.1 — no nodejs) and
   `packages.default` via `makeRustPlatform` with the rust-overlay toolchain from
   `fromRustupToolchainFile` (not nixpkgs' rustc). `flake.lock` pins OpenSpec. `.envrc`
   with `use flake`.
 - **Non-Nix:** `rustup toolchain install` (reads `rust-toolchain.toml`); `cargo install
   --locked just@=X.Y.Z watchexec-cli@=X.Y.Z cargo-deny@=X.Y.Z` at the versions the
   flake provides, recorded in `docs/dependencies.md` and bumped with `flake.lock`;
-  OpenSpec via `npm i -g @fission-ai/openspec@1.13.1`; Mailpit via `compose.dev.yaml`.
+  OpenSpec via `npm i -g @fission-ai/openspec@1.13.1`.
   OpenSpec never runs in CI or release jobs.
 - **Live reload:** `just dev` runs `watchexec -r -- cargo run --features dev`. The `dev`
   feature serves CSS/JS from disk and a same-origin `/static/dev-reload.js` (~15 lines)
@@ -789,7 +791,8 @@ quoted.
   (askama compiles templates).
 - `#[cfg(all(feature = "dev", not(debug_assertions)))] compile_error!("dev feature in
   release build");`
-- `compose.dev.yaml` with Mailpit.
+- No mail server in development: a `dev` build prints every mail in full to the
+  terminal instead of sending it (§9).
 
 ## 12. Testing
 
@@ -948,11 +951,12 @@ files.
   here.
 - **`.env.example`:** every required variable not fixed in `compose.yaml`
   (`KOHAKU_DOMAIN`, the one source of the main domain for both services; mail sender;
-  SMTP server), no insecure placeholders.
-- **`secrets/`** (gitignored): `smtp_password` and `kohaku_secret` via Compose
-  `secrets:`. Compose bind-mounts file secrets with host owner and mode and ignores
-  `uid`/`gid`/`mode`, so the README makes the directory 0700 and the files 0644:
-  readable by uid 65532 in the container, by no other host user.
+  SMTP server; the two secrets, left empty), no insecure placeholders.
+- **`.env`** (gitignored, `chmod 600`): holds every setting, secrets included.
+  `compose.yaml` passes `KOHAKU_SECRET` and `KOHAKU_SMTP_PASSWORD` as
+  `${VAR:?message}`, so an empty one stops `docker compose up` with a hint. Anyone who
+  can run `docker inspect` can read them; Docker access is root-equivalent anyway.
+  `KOHAKU_SECRET` is backed up separately from database backups.
 - Users with their own proxy delete `caddy`, attach `kohaku` to their proxy network,
   set `KOHAKU_TRUSTED_PROXIES` to the proxy's exact address and make the proxy set
   `X-Forwarded-For` (nginx `proxy_add_x_forwarded_for`, NixOS
@@ -964,7 +968,7 @@ files.
 
 One capability spec each, implemented as one change each, in order:
 
-1. `foundation` — config (incl. `KOHAKU_SECRET_FILE` + keycheck, `KOHAKU_BASE_URL`
+1. `foundation` — config (incl. `KOHAKU_SECRET` + keycheck, `KOHAKU_BASE_URL`
    validation, `KOHAKU_TRUSTED_PROXIES`), key registry, DB + migration runner (rules,
    downgrade guard, pre-migrate copy), pragmas and write rules, instance lock, graceful
    shutdown, `backup`/`restore` (file and stdin/stdout, `--list`), server skeleton, host
