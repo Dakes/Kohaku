@@ -173,7 +173,7 @@ Everything below runs on the host, not in the sandbox.
 5. When `publish` finishes, check that Docker Hub lists `1.2.3`, `1.2`, `1` and `latest`
    for the same digest, then verify the signature (below).
 6. Write the release notes: **Releases** → **Draft a new release** → choose tag `1.2.3`.
-   Call out any change to `compose.yaml`, `Caddyfile` or `.env.example`, because
+   Call out any change to `docker-compose.yml`, `Caddyfile` or `.env.example`, because
    `docker compose pull` never updates those files for users.
 
 If something fails:
@@ -210,4 +210,4 @@ cosign verify \
   Any other signer, workflow or ref fails.
 - The same command works for `dakes/kohaku:1`, which points at a signed release digest.
 - To pin exactly what you verified, use `dakes/kohaku@sha256:<digest>` in
-  `compose.yaml`.
+  `docker-compose.yml`.

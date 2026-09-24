@@ -1,0 +1,79 @@
+# Kohaku behind Caddy (README, "Deployment"). Settings and secrets come from .env next
+# to this file; data lives in ./data and ./caddy beside it. Requires Docker Engine 27 or
+# newer. Security behaviour lives in the image: `docker compose pull` never updates this
+# file or the Caddyfile.
+
+services:
+  kohaku:
+    # The major version this file ships with: `pull` brings fixes, never a new major.
+    image: dakes/kohaku:0
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    mem_limit: 640m
+    volumes:
+      # Create it first (works with rootless Docker too):
+      # mkdir data && docker run --rm -v "$PWD/data:/data" alpine:3 sh -c 'chown 65532:65532 /data && chmod 700 /data'
+      - ./data:/data
+    environment:
+      KOHAKU_BASE_URL: https://${KOHAKU_DOMAIN:?set KOHAKU_DOMAIN in .env}${KOHAKU_HTTPS_PORT:+:${KOHAKU_HTTPS_PORT}}
+      # The proxy network below: only Caddy and Kohaku are on it.
+      KOHAKU_TRUSTED_PROXIES: 10.231.7.0/29,fd4b:7a1c:2e90:1::/64
+      KOHAKU_SECRET: ${KOHAKU_SECRET:?generate one with `head -c 32 /dev/urandom | base64` and put it in .env}
+      KOHAKU_SMTP_HOST: ${KOHAKU_SMTP_HOST:-}
+      KOHAKU_SMTP_PORT: ${KOHAKU_SMTP_PORT:-}
+      KOHAKU_SMTP_TLS: ${KOHAKU_SMTP_TLS:-}
+      KOHAKU_SMTP_USERNAME: ${KOHAKU_SMTP_USERNAME:-}
+      KOHAKU_SMTP_PASSWORD: ${KOHAKU_SMTP_PASSWORD:?put your SMTP password in .env, in single quotes}
+      KOHAKU_SMTP_FROM: ${KOHAKU_SMTP_FROM:-}
+      # Optional: passed only when .env sets it.
+      KOHAKU_PUBLIC_MAIL_PER_HOUR:
+    healthcheck:
+      test: ["CMD", "kohaku", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
+    logging:
+      driver: local
+    networks:
+      - proxy
+
+  caddy:
+    image: caddy:2.11
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    # The caddy binary carries this file capability to bind 80 and 443.
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    mem_limit: 256m
+    # 80 and 443 unless .env says otherwise (rootless Docker cannot publish them).
+    ports:
+      - "${KOHAKU_HTTP_PORT:-80}:80"
+      - "${KOHAKU_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+    environment:
+      KOHAKU_DOMAIN: ${KOHAKU_DOMAIN:?set KOHAKU_DOMAIN in .env}
+      KOHAKU_CADDY_CI: ${KOHAKU_CADDY_CI:-}
+    logging:
+      driver: local
+    networks:
+      - proxy
+
+networks:
+  # Private and dual-stack, but not `internal`: Kohaku sends mail, Caddy talks to ACME.
+  proxy:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 10.231.7.0/29
+        - subnet: fd4b:7a1c:2e90:1::/64
+

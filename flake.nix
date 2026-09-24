@@ -54,7 +54,11 @@
               fileset = fs.unions [
                 ./Cargo.toml
                 ./Cargo.lock
+                ./.env.example
+                ./migrations
                 ./src
+                ./static
+                ./templates
                 ./tests
               ];
             };

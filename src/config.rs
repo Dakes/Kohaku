@@ -32,7 +32,7 @@ pub const DEFAULT_PUBLIC_MAIL_PER_HOUR: u32 = 60;
 
 /// The placeholders `.env.example` ships; `serve` refuses each unchanged.
 pub mod placeholders {
-    /// `KOHAKU_DOMAIN`, from which `compose.yaml` builds `KOHAKU_BASE_URL`.
+    /// `KOHAKU_DOMAIN`, from which `docker-compose.yml` builds `KOHAKU_BASE_URL`.
     pub const DOMAIN: &str = "bugs.example.com";
     pub const BASE_URL: &str = "https://bugs.example.com";
     pub const SMTP_HOST: &str = "smtp.example.com";
@@ -158,6 +158,24 @@ impl Config {
                 problems: reader.problems,
             }),
         }
+    }
+}
+
+/// Loads only the SMTP connection settings, by the `serve` rules. Tests of the SMTP
+/// adapter use it in every build; `serve` loads them through [`Config::load`].
+pub fn load_smtp<F>(lookup: F) -> Result<SmtpConfig, ConfigError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let mut reader = Reader {
+        lookup,
+        problems: Vec::new(),
+    };
+    match reader.smtp() {
+        Some(config) if reader.problems.is_empty() => Ok(config),
+        _ => Err(ConfigError {
+            problems: reader.problems,
+        }),
     }
 }
 
@@ -297,8 +315,6 @@ where
         (!refused).then_some(MailTransport::Print)
     }
 
-    // Unused in a `dev` build, where `transport` refuses these settings instead.
-    #[cfg_attr(feature = "dev", expect(dead_code))]
     fn smtp(&mut self) -> Option<SmtpConfig> {
         let host =
             self.required_not_placeholder(SMTP_HOST, placeholders::SMTP_HOST, parse_smtp_host);
@@ -432,6 +448,12 @@ fn parse_base_url(text: &str) -> Result<BaseUrl, &'static str> {
     Ok(BaseUrl { https, host, port })
 }
 
+/// Parses a `KOHAKU_BASE_URL` value that tests know to be valid.
+#[cfg(test)]
+pub(crate) fn parse_base_url_for_tests(text: &str) -> BaseUrl {
+    parse_base_url(text).expect("valid test base URL")
+}
+
 /// A decimal without sign, spaces or leading zeros.
 fn parse_decimal(text: &str) -> Option<u32> {
     let canonical = !text.is_empty()
@@ -505,6 +527,12 @@ fn parse_trusted_proxies(text: &str) -> Result<TrustedProxies, &'static str> {
         .collect::<Option<Vec<_>>>()
         .map(TrustedProxies::List)
         .ok_or(TRUSTED_PROXIES_RULE)
+}
+
+/// Parses a `KOHAKU_TRUSTED_PROXIES` value that tests know to be valid.
+#[cfg(test)]
+pub(crate) fn parse_trusted_proxies_for_tests(text: &str) -> TrustedProxies {
+    parse_trusted_proxies(text).expect("valid test list")
 }
 
 fn parse_ip_net(entry: &str) -> Option<IpNet> {
@@ -602,6 +630,12 @@ fn parse_sender(text: &str) -> Result<SenderAddress, &'static str> {
         return Err(SENDER_RULE);
     }
     Ok(SenderAddress(text.to_owned()))
+}
+
+/// Parses a sender that tests know to be valid.
+#[cfg(test)]
+pub(crate) fn parse_sender_for_tests(text: &str) -> SenderAddress {
+    parse_sender(text).expect("valid test sender")
 }
 
 fn parse_public_mail_per_hour(text: &str) -> Result<u32, &'static str> {
@@ -988,6 +1022,79 @@ mod tests {
                 rule: UNCHANGED_EXAMPLE
             }]
         );
+    }
+
+    /// `.env.example` as `docker compose` reads it: `KEY=value`, single quotes literal.
+    fn example_environment() -> HashMap<String, OsString> {
+        include_str!("../.env.example")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| {
+                let (name, value) = line.split_once('=').expect("KEY=value line");
+                let value = value
+                    .strip_prefix('\'')
+                    .and_then(|v| v.strip_suffix('\''))
+                    .unwrap_or(value);
+                (name.to_owned(), OsString::from(value))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn example_placeholders_match_the_shipped_file() {
+        let example = example_environment();
+        assert_eq!(
+            placeholders::BASE_URL,
+            format!("https://{}", placeholders::DOMAIN)
+        );
+        let placeholder_of = |name: &str| match name {
+            "KOHAKU_DOMAIN" => Some(placeholders::DOMAIN),
+            SMTP_HOST => Some(placeholders::SMTP_HOST),
+            SMTP_USERNAME => Some(placeholders::SMTP_USERNAME),
+            SMTP_FROM => Some(placeholders::SMTP_FROM),
+            _ => None,
+        };
+        // Every filled value is either a refused placeholder or a working default.
+        for (name, value) in &example {
+            let value = value.to_str().unwrap();
+            match placeholder_of(name) {
+                Some(placeholder) => assert_eq!(value, placeholder, "{name}"),
+                None => assert!(
+                    matches!(
+                        (name.as_str(), value),
+                        (SECRET | SMTP_PASSWORD, "") | (SMTP_PORT, "587") | (SMTP_TLS, "starttls")
+                    ),
+                    "{name} has an unchecked example value"
+                ),
+            }
+        }
+        assert_eq!(example.len(), 8);
+    }
+
+    #[cfg(not(feature = "dev"))]
+    #[test]
+    fn unchanged_example_configuration() {
+        // docker-compose.yml builds the base URL from KOHAKU_DOMAIN and sets the proxy list.
+        let mut vars = example_environment();
+        let domain = vars.remove("KOHAKU_DOMAIN").unwrap();
+        vars.insert(
+            BASE_URL.to_owned(),
+            OsString::from(format!("https://{}", domain.to_str().unwrap())),
+        );
+        vars.insert(
+            TRUSTED_PROXIES.to_owned(),
+            "10.231.7.2,fd4b:7a1c:2e90:1::2".into(),
+        );
+        vars.insert(SECRET.to_owned(), TEST_SECRET.into());
+        vars.insert(SMTP_PASSWORD.to_owned(), "a password".into());
+        let problems = serve_problems(&vars);
+        assert!(
+            problems.iter().all(|p| p.rule == UNCHANGED_EXAMPLE),
+            "{problems:?}"
+        );
+        let mut names = variables(&problems);
+        names.sort_unstable();
+        assert_eq!(names, [BASE_URL, SMTP_FROM, SMTP_HOST, SMTP_USERNAME]);
     }
 
     #[test]

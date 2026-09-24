@@ -33,11 +33,12 @@ logs, a configurable port or data directory.
 
 **D1. Dependencies and features.** All `default-features = false`, with exactly: axum `http1`,
 `tokio`, `matched-path`; tokio `rt-multi-thread`, `net`, `time`, `sync`, `signal`, `macros`;
-hyper-util `tokio`, `server`, `http1`, `service`, `server-graceful`; tower `util`; tower-http
+hyper-util `tokio`, `server`, `http1`, `service`; tower `util`; tower-http
 `limit`, `timeout`, `trace`; rusqlite `bundled`; askama `derive`, `std`; base64 `std`; lettre
 `smtp-transport`, `builder`, `tokio1-rustls`, `ring`, `webpki-roots`; serde `std`, `derive`;
 serde_json and tracing `std`; tracing-subscriber `fmt`, `std`; hmac, sha2, getrandom,
-idna_adapter none. Notably off: hyper-util `server-auto` (h2), askama `config` (TOML parser),
+idna_adapter none. Notably off: hyper-util `server-auto` (h2) and `server-graceful` (whose watcher needs `server-auto`
+for an auto connection), askama `config` (TOML parser),
 lettre `pool` (one connection at a time), tracing `attributes` (proc-macro), tracing-subscriber
 `env-filter` (regex; `RUST_LOG` must not change logging); axum `json`/`form`/`query` wait for a
 route parsing such input. No direct `hyper`; the only dev-dependency is `rustls` for D18's TLS
@@ -156,7 +157,9 @@ on `EAFNOSUPPORT`, after config, lock, keycheck and migrations. hyper-util `auto
 `http1_only()` with `TokioTimer` and `header_read_timeout(10 s)` (armed for every request head,
 keep-alive included); hyper's default header limits (100 headers, ~408 KiB buffer) are kept.
 The peer address goes into request extensions; accept errors are counted and followed by a
-short pause. SIGTERM/SIGINT: stop accepting, `GracefulShutdown` drains ≤ 8 s, background tasks
+short pause. SIGTERM/SIGINT: stop accepting, signal every connection's `graceful_shutdown()` (a connection
+whose request head is still arriving, seen by counting bytes read, first gets it dispatched),
+drain ≤ 8 s then abort the rest, background tasks
 stop at their next await (each step is one transaction), exit 0. Not `axum::serve` (§3): it has
 no header read timeout.
 
@@ -285,10 +288,10 @@ build` runs them; host platform only. The devShell adds `file` (D31.9). Outside 
 
 **D25. Dockerfile.** As §13: one COPY-only stage from `dist/${TARGETARCH}/kohaku` (with
 `--chmod=0755`: CI artifacts lose the exec bit) and `docker/data/.keep`, no `USER` (base is
-nonroot) or `HEALTHCHECK` (Compose owns it); `.dockerignore` admits only those and
-`Cargo.lock`; CI and release build from it.
+nonroot) or `HEALTHCHECK` (Compose owns it); `.dockerignore` admits only those; CI and release build from it.
 
-**D26. Compose.** As §14, plus: SMTP settings and both secrets interpolated from `.env`, the
+**D26. Compose.** As §14 (owner decision: bind mounts beside the file, and the proxy
+network's subnets as trusted proxies instead of fixed Caddy addresses), plus: SMTP settings and both secrets interpolated from `.env`, the
 secrets as `${…:?…}` with a how-to message; image pinned to the major tag; `.env.example`
 holds `KOHAKU_DOMAIN`, the empty secrets and the SMTP settings, with D5's refused placeholders
 and real defaults (587, `starttls`).
@@ -302,12 +305,11 @@ as a SHA-256-checked tarball. Jobs: `check` (fmt, clippy, both test builds), `de
 **D28. Release (`release.yml`).** Names as §13 and `docs/releasing.md`. `build` checks the tag
 is exactly `cargo metadata`'s `X.Y.Z`, then advisories, `zigbuild`; `arm-check` on
 `ubuntu-24.04-arm` verifies the hash, then compares `kohaku --version` with the tag; `publish`
-builds the index once into a local OCI archive and fails unless its SBOM lists `pkg:cargo/`
-packages (D31.7), then pushes by digest, signs, tags `X.Y.Z` last. Later changes leave it
-alone.
+pushes the index by digest with provenance and no SBOM (D31.7), signs, and tags `X.Y.Z` last.
+Later changes leave it alone.
 
 **D29. Smoke test.** `ci/smoke.sh` (CI, `just smoke`) checks Docker Engine ≥ 27; tags the
-release-Dockerfile image as `docker compose config` names it, so the shipped `compose.yaml`
+release-Dockerfile image as `docker compose config` names it, so the shipped `docker-compose.yml`
 runs as is with `--pull never`; writes a valid `.env` (0600, secrets included) with
 `KOHAKU_CADDY_CI` (`local_certs` and `skip_install_trust` on separate lines); waits for healthy
 on a fresh volume; expects via Caddy's root certificate the landing page with CSP and HSTS,
@@ -332,7 +334,8 @@ the fake `Mailer`, temporary data directories; only `cli.rs` knows the fixed `/d
    and `moderation`.
 5. **tls-ask 404 for the main domain** (§6): it has its own Caddy site block.
 6. **No pre-migration copy for a new database** (§3 rule 2): nothing to preserve.
-7. **SBOM checked on every release** (§13 checks only the first).
+7. **No SBOM attestation** (§13's fallback): BuildKit's scanner lists no crates for this
+   image, from the context's `Cargo.lock` or the binary (checked 2026-09-24).
 8. **CI builds both musl targets** (§13): catches aarch64 breakage before a tag.
 9. **Tools** (§11): `file` in the devShell; non-Nix setup names a system `cc`.
 10. **Releases only from the newest line** (§13): no backports, so moving `X.Y`, `X`,
@@ -365,7 +368,7 @@ smoke test; release last. The release workflow stays inert until the owner compl
 
 ## Open Questions
 
-- Tag `0.1.0` from foundation to exercise publishing (signing, immutable tags, SBOM check)?
+- Tag `0.1.0` from foundation to exercise publishing (signing, immutable tags)?
   It moves `latest` to a featureless instance; an owner call at tag time.
 - Exact pins (toolchain patch, zig, cargo-zigbuild, cargo-deny, just, watchexec, Caddy,
   distroless) are set at apply time in `docs/dependencies.md`.

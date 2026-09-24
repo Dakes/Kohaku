@@ -1,9 +1,20 @@
 //! Command line: a hand-written grammar over `args_os()` (design D2: no clap).
 
 use std::ffi::{OsStr, OsString};
-use std::io::Write;
+use std::fmt;
+use std::io::{Read, Write};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+use crate::config::{Config, ConfigError, process_environment};
+use crate::db::DataDir;
+use crate::db::backup::{
+    BackupError, RestoreError, backup_to_file, backup_to_writer, list_backups, restore,
+};
+use crate::healthcheck::Unhealthy;
+use crate::logging::{self, Stream};
+use crate::serve::{Listen, MailerChoice, ServeError, serve};
 
 /// The version printed by `--version`; release tags must equal it (CI checks).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -27,6 +38,19 @@ Settings come from environment variables only; see the README.
 
 /// Exit status of a usage error; every other failure exits 1.
 const EXIT_USAGE: u8 = 2;
+
+/// The data directory: the image's volume, or `./data` in a `dev` build.
+const DATA_DIR: &str = if cfg!(feature = "dev") {
+    "./data"
+} else {
+    "/data"
+};
+
+/// The port `serve` listens on and `healthcheck` probes; not configurable.
+const PORT: u16 = 8080;
+
+/// Blocking threads of the runtime (design §3 Concurrency and memory bounds).
+const MAX_BLOCKING_THREADS: usize = 32;
 
 /// What one invocation asks for.
 #[derive(Debug, PartialEq, Eq)]
@@ -115,7 +139,24 @@ pub fn main() -> ExitCode {
     match parse(std::env::args_os().skip(1)) {
         Ok(Invocation::Version) => write_stdout(&format!("kohaku {VERSION}\n")),
         Ok(Invocation::Help) => write_stdout(USAGE),
-        Ok(Invocation::Run(command)) => run(command),
+        Ok(Invocation::Run(command)) => {
+            // `serve` has no data output and logs to stdout; the rest keep it for data.
+            logging::init(match command {
+                Command::Serve => Stream::Stdout,
+                _ => Stream::Stderr,
+            });
+            let data = DataDir::new(DATA_DIR);
+            // Unlocked handles: `serve` logs to stdout from every runtime thread.
+            let stdin = &mut std::io::stdin();
+            let stdout = &mut std::io::stdout();
+            match execute(command, &process_environment, &data, stdin, stdout) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    tracing::error!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Err(UsageError) => {
             // Nothing sensible remains to do if stderr itself is gone.
             let _ = std::io::stderr().write_all(USAGE.as_bytes());
@@ -124,15 +165,113 @@ pub fn main() -> ExitCode {
     }
 }
 
-fn run(command: Command) -> ExitCode {
-    match command {
-        Command::Serve
-        | Command::Healthcheck
-        | Command::Backup(_)
-        | Command::Restore(_)
-        | Command::RestoreList => {
-            let _ = writeln!(std::io::stderr(), "kohaku: this command is not built yet");
-            ExitCode::FAILURE
+/// Why a command failed (exit status 1); never holds a secret or request data.
+#[derive(Debug)]
+pub enum CommandError {
+    Config(ConfigError),
+    Backup(BackupError),
+    Restore(RestoreError),
+    List(std::io::Error),
+    Serve(ServeError),
+    Runtime(std::io::Error),
+    Unhealthy(Unhealthy),
+}
+
+impl fmt::Display for CommandError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CommandError::Config(error) => write!(f, "invalid configuration:\n{error}"),
+            CommandError::Backup(error) => error.fmt(f),
+            CommandError::Restore(error) => error.fmt(f),
+            CommandError::List(error) => write!(f, "cannot list /data/backups: {}", error.kind()),
+            CommandError::Serve(error) => error.fmt(f),
+            CommandError::Runtime(error) => write!(f, "cannot start the runtime: {}", error.kind()),
+            CommandError::Unhealthy(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for CommandError {}
+
+/// Runs `command` with its environment, data directory and standard streams injected.
+pub fn execute<F>(
+    command: Command,
+    lookup: &F,
+    data: &DataDir,
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+) -> Result<(), CommandError>
+where
+    F: Fn(&str) -> Option<OsString>,
+{
+    let config = Config::load(&command, lookup).map_err(CommandError::Config)?;
+    match (command, config) {
+        (Command::Healthcheck, _) => {
+            crate::healthcheck::probe(SocketAddr::from((Ipv4Addr::LOCALHOST, PORT)))
+                .map_err(CommandError::Unhealthy)
+        }
+        (Command::Backup(BackupTarget::File(path)), Config::Backup(config)) => {
+            backup_to_file(data, &config.secret, &path).map_err(CommandError::Backup)
+        }
+        (Command::Backup(BackupTarget::Stdout), Config::Backup(config)) => {
+            backup_to_writer(data, &config.secret, stdout).map_err(CommandError::Backup)
+        }
+        (Command::Restore(RestoreSource::File(path)), _) => {
+            let mut file = std::fs::File::open(&path)
+                .map_err(|error| CommandError::Restore(RestoreError::Io(error)))?;
+            restore(data, &mut file, crate::time::now_unix()).map_err(CommandError::Restore)
+        }
+        (Command::Restore(RestoreSource::Stdin), _) => {
+            restore(data, stdin, crate::time::now_unix()).map_err(CommandError::Restore)
+        }
+        (Command::RestoreList, _) => {
+            for name in list_backups(data).map_err(CommandError::List)? {
+                stdout
+                    .write_all(name.as_encoded_bytes())
+                    .and_then(|()| stdout.write_all(b"\n"))
+                    .map_err(CommandError::List)?;
+            }
+            stdout.flush().map_err(CommandError::List)
+        }
+        (Command::Serve, Config::Serve(config)) => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .max_blocking_threads(MAX_BLOCKING_THREADS)
+                .build()
+                .map_err(CommandError::Runtime)?;
+            runtime
+                .block_on(serve(
+                    config,
+                    data.clone(),
+                    Listen::AllAddresses(PORT),
+                    MailerChoice::Configured,
+                    |_| {},
+                    termination(),
+                ))
+                .map_err(CommandError::Serve)
+        }
+        (Command::Serve | Command::Backup(_), _) => {
+            unreachable!("Config::load returns the configuration its command needs")
+        }
+    }
+}
+
+/// Completes on SIGTERM or SIGINT.
+async fn termination() {
+    use tokio::signal::unix::{SignalKind, signal};
+    match (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::interrupt()),
+    ) {
+        (Ok(mut term), Ok(mut int)) => {
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = int.recv() => {}
+            }
+        }
+        _ => {
+            tracing::error!("cannot watch for SIGTERM; stop the server with SIGKILL");
+            std::future::pending::<()>().await;
         }
     }
 }

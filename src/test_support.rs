@@ -50,6 +50,11 @@ pub struct TempDir {
 }
 
 impl TempDir {
+    // `allow`, not `expect`: the lint fires only where the type is public (the library).
+    #[allow(
+        clippy::new_without_default,
+        reason = "creating a directory on disk is not a default value"
+    )]
     pub fn new() -> TempDir {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()

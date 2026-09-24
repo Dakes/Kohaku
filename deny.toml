@@ -17,7 +17,15 @@ ignore = []
 
 [licenses]
 # Exactly the licenses in the tree when a crate is adopted.
-allow = []
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+]
 confidence-threshold = 0.93
 
 [licenses.private]
@@ -40,7 +48,21 @@ deny = [
 
 [bans.build]
 # Every crate allowed to run a build script, as adopted; any new one fails CI.
-allow-build-scripts = []
+allow-build-scripts = [
+    { crate = "getrandom" },
+    { crate = "httparse" },
+    { crate = "libc" },
+    { crate = "libsqlite3-sys" },
+    { crate = "proc-macro2" },
+    { crate = "quote" },
+    { crate = "ring" },
+    { crate = "rustls" },
+    { crate = "serde" },
+    { crate = "serde_core" },
+    { crate = "serde_json" },
+    { crate = "unicode-joining-type" },
+    { crate = "zmij" },
+]
 
 [sources]
 unknown-registry = "deny"

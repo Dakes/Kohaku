@@ -94,12 +94,12 @@ binary SHALL be answered with a patch release.
 ### Requirement: Compose smoke test in CI
 
 Every CI run SHALL build the image with the release Dockerfile from its own static musl binary and
-run the shipped `compose.yaml` and `Caddyfile` (only the kohaku image reference changed) with
+run the shipped `docker-compose.yml` and `Caddyfile` (only the kohaku image reference changed) with
 `KOHAKU_CADDY_CI` selecting Caddy's local CA and no GitHub secret, failing unless each step passes:
 
-- `docker compose config`, then starting on a new `kohaku-data` volume until kohaku is healthy,
-  the test changing no ownership or permission;
-- through Caddy, trusting only the `caddy-data` root certificate and resolving names to the
+- `docker compose config`, then starting on an empty `./data` prepared as the README says until
+  kohaku is healthy;
+- through Caddy, trusting only the root certificate in Caddy's `/data` and resolving names to the
   runner: the main host's `/` is the landing page (`host-routing`) with 200, and the TLS handshake
   for a name Kohaku does not serve fails;
 - `kohaku backup -` via `docker compose exec -T` writes a SQLite database to stdout; with kohaku
@@ -108,7 +108,7 @@ run the shipped `compose.yaml` and `Caddyfile` (only the kohaku image reference 
 
 #### Scenario: ENTRYPOINT regression fails CI
 
-- **WHEN** the image under test declares an ENTRYPOINT, or the shipped `compose.yaml` fails `docker compose config`
+- **WHEN** the image under test declares an ENTRYPOINT, or the shipped `docker-compose.yml` fails `docker compose config`
 - **THEN** that step fails and so does the run
 
 ### Requirement: Release build from a matching version tag
@@ -205,10 +205,10 @@ content with COPY only (no RUN); CI and release SHALL build from that same Docke
 
 ### Requirement: Hardened Kohaku service in Compose
 
-The shipped `compose.yaml` SHALL run `kohaku` from `dakes/kohaku:X` (`X` = the major version of
+The shipped `docker-compose.yml` SHALL run `kohaku` from `dakes/kohaku:X` (`X` = the major version of
 the release it ships with) with no published host port, `read_only: true`, `cap_drop: [ALL]`,
 `security_opt: [no-new-privileges:true]`, a tmpfs at `/tmp`, no `user` override, the named volume
-`kohaku-data` at `/data`, healthcheck `["CMD", "kohaku", "healthcheck"]` (no shell),
+the bind mount `./data` (beside `docker-compose.yml`) at `/data`, healthcheck `["CMD", "kohaku", "healthcheck"]` (no shell),
 `mem_limit: 640m`, `restart: unless-stopped`, `KOHAKU_BASE_URL: https://${KOHAKU_DOMAIN:?}` (so
 Compose fails naming `KOHAKU_DOMAIN` when it is unset or empty), and bounded logs: the `local`
 driver, or `json-file` with `max-size: 10m` and `max-file: 3`.
@@ -226,13 +226,13 @@ driver, or `json-file` with `max-size: 10m` and `max-file: 3`.
 ### Requirement: Hardened Caddy reverse proxy
 
 TLS SHALL terminate in a `caddy` service, the only service publishing host ports, exactly 80 and
-443. Neither `compose.yaml` nor the `Caddyfile` SHALL set or remove security headers (no `header`
+443. Neither `docker-compose.yml` nor the `Caddyfile` SHALL set or remove security headers (no `header`
 directive) or impose request limits or validation; those ship in the image.
 
 - caddy SHALL use an explicit `caddy:2.N` tag or digest (the smoke test runs the same reference),
   kohaku's `cap_drop`, `security_opt`, `read_only`, `/tmp` tmpfs, `restart` and log settings plus
-  `cap_add: [NET_BIND_SERVICE]`, `mem_limit: 256m`, the named volumes `caddy-data:/data` and
-  `caddy-config:/config` (certificates and ACME account survive `down` without `-v`), and the
+  `cap_add: [NET_BIND_SERVICE]`, `mem_limit: 256m`, the bind mounts `./caddy/data:/data` and
+  `./caddy/config:/config` (certificates and ACME account survive `down`), and the
   environment `KOHAKU_DOMAIN: ${KOHAKU_DOMAIN:?}` and `KOHAKU_CADDY_CI: ${KOHAKU_CADDY_CI:-}`;
   with `KOHAKU_CADDY_CI` unset there SHALL be no local CA, only Caddy's default public ACME issuers.
 - The `Caddyfile` SHALL have a global block with `{$KOHAKU_CADDY_CI}` and on-demand TLS asking
@@ -252,17 +252,17 @@ directive) or impose request limits or validation; those ship in the image.
 
 ### Requirement: Private dual-stack proxy network
 
-`compose.yaml` SHALL define one network, `proxy`: `enable_ipv6: true`, not `internal`, a fixed
-IPv4 /29 inside 10.0.0.0/8 but outside 10.0.0.0/16, and a fixed IPv6 /64 inside fd00::/8 with a
-non-zero 40-bit global ID. Both services SHALL attach only to it, Caddy with a fixed `ipv4_address`
-and `ipv6_address`. The kohaku `environment:` block SHALL set `KOHAKU_TRUSTED_PROXIES` to exactly
-those two single addresses as a literal next to the subnets, never interpolated from `.env` or the
-shell. The deployment SHALL require Docker Engine 27 or newer.
+`docker-compose.yml` SHALL define one network, `proxy`: `enable_ipv6: true`, not `internal`, a
+fixed IPv4 /29 inside 10.0.0.0/8 but outside 10.0.0.0/16, and a fixed IPv6 /64 inside fd00::/8
+with a non-zero 40-bit global ID. Both services, and nothing else, SHALL attach only to it. The
+kohaku `environment:` block SHALL set `KOHAKU_TRUSTED_PROXIES` to exactly those two subnets as a
+literal next to them, never interpolated from `.env` or the shell. The deployment SHALL require
+Docker Engine 27 or newer.
 
 #### Scenario: Environment cannot widen the trust list
 
 - **WHEN** `.env` or the invoking shell defines `KOHAKU_TRUSTED_PROXIES`
-- **THEN** kohaku still receives exactly Caddy's two addresses
+- **THEN** kohaku still receives exactly the network's two subnets
 
 #### Scenario: Attacker forges X-Forwarded-For through Caddy
 
@@ -277,12 +277,12 @@ shell. The deployment SHALL require Docker Engine 27 or newer.
 ### Requirement: Secrets and settings in the environment file
 
 The instance secret and the SMTP password SHALL reach kohaku as `KOHAKU_SECRET` and
-`KOHAKU_SMTP_PASSWORD`, interpolated by `compose.yaml` from `.env` like the other operator
+`KOHAKU_SMTP_PASSWORD`, interpolated by `docker-compose.yml` from `.env` like the other operator
 settings, each as `${NAME:?message}` whose message says how to set it, so `docker compose up`
-stops while either is unset or empty. No secret value SHALL appear in `compose.yaml` or
+stops while either is unset or empty. No secret value SHALL appear in `docker-compose.yml` or
 `.env.example`. git SHALL ignore `.env` and track `.env.example`.
 
-- `.env.example` SHALL list every required variable `compose.yaml` does not fix: `KOHAKU_DOMAIN`
+- `.env.example` SHALL list every required variable `docker-compose.yml` does not fix: `KOHAKU_DOMAIN`
   (single source of the main domain for both services), `KOHAKU_SECRET` and
   `KOHAKU_SMTP_PASSWORD` left empty, and the `configuration` mail sender and SMTP server
   settings, with `KOHAKU_DOMAIN` (via the base URL built from it), `KOHAKU_SMTP_HOST`,
@@ -301,31 +301,30 @@ stops while either is unset or empty. No secret value SHALL appear in `compose.y
 
 #### Scenario: Secrets stay out of the repository and the shipped files
 
-- **WHEN** an operator fills in `.env` in a clone as the README says, runs `git status`, and an attacker reads the shipped `compose.yaml` and `.env.example`
+- **WHEN** an operator fills in `.env` in a clone as the README says, runs `git status`, and an attacker reads the shipped `docker-compose.yml` and `.env.example`
 - **THEN** git reports no change and neither secret value appears in the shipped files
 
 ### Requirement: Installation and upgrades from release tags
 
-The README SHALL install by fetching `compose.yaml`, `Caddyfile` and `.env.example` from
+The README SHALL install by fetching `docker-compose.yml`, `Caddyfile` and `.env.example` from
 `https://raw.githubusercontent.com/Dakes/Kohaku/refs/tags/X.Y.Z/` for the current release, never a
-branch; the `compose.yaml` at tag `X.Y.Z` SHALL pin `dakes/kohaku:X`, so `docker compose pull`
+branch; the `docker-compose.yml` at tag `X.Y.Z` SHALL pin `dakes/kohaku:X`, so `docker compose pull`
 delivers the newest release of that major version and never a newer major.
 
-- Release notes SHALL name every change to `compose.yaml`, `Caddyfile` or `.env.example` since the
+- Release notes SHALL name every change to `docker-compose.yml`, `Caddyfile` or `.env.example` since the
   previous release.
-- The README SHALL state: Docker Engine 27 or newer is required; `docker compose down -v` deletes
-  all data and certificates; a bind mount replacing `kohaku-data` must first be
-  `chown -R 65532:65532` with mode 0700; the subnets, Caddy's addresses and
-  `KOHAKU_TRUSTED_PROXIES` change together; and, behind an existing proxy, remove `caddy`, attach
+- The README SHALL state: Docker Engine 27 or newer is required; all data and certificates
+  live in `./data` and `./caddy` beside `docker-compose.yml`; `./data` must be created first
+  owned by 65532:65532 with mode 0700; the subnets and `KOHAKU_TRUSTED_PROXIES` change together; and, behind an existing proxy, remove `caddy`, attach
   `kohaku` to that proxy's network, set `KOHAKU_TRUSTED_PROXIES` to the proxy's exact address, make
   the proxy set `X-Forwarded-For`, and never publish Kohaku's port beyond the proxy network.
 
 #### Scenario: Attacker's branch is never fetched
 
-- **WHEN** an attacker gets a modified `compose.yaml` onto `main` or onto a branch named `X.Y.Z`
+- **WHEN** an attacker gets a modified `docker-compose.yml` onto `main` or onto a branch named `X.Y.Z`
 - **THEN** the README's `refs/tags/X.Y.Z/` URLs still return the tag's files
 
 #### Scenario: Pull stays within the major version
 
-- **WHEN** an operator with `compose.yaml` from `1.2.3` runs `docker compose pull && docker compose up -d` after `1.4.0` and `2.0.0` exist
+- **WHEN** an operator with `docker-compose.yml` from `1.2.3` runs `docker compose pull && docker compose up -d` after `1.4.0` and `2.0.0` exist
 - **THEN** kohaku runs `1.4.0`

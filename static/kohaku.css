@@ -1,0 +1,53 @@
+/* Kohaku: one small stylesheet, no external resources. */
+:root {
+  color-scheme: light dark;
+  --text: #1d1b19;
+  --muted: #6b645c;
+  --background: #fbf8f3;
+  --accent: #b5651d;
+  --line: #e4ddd2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #ece6dd;
+    --muted: #a49b8f;
+    --background: #1a1816;
+    --accent: #e0954f;
+    --line: #34302b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--background);
+}
+
+body {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+h1 {
+  font-size: 1.75rem;
+  line-height: 1.2;
+}
+
+a {
+  color: var(--accent);
+}
+
+footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.875rem;
+}

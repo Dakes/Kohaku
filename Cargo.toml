@@ -13,7 +13,27 @@ publish = false
 dev = []
 
 [dependencies]
+askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "matched-path"] }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
+getrandom = { version = "0.4.3", default-features = false }
+hmac = { version = "0.13.0", default-features = false }
+idna_adapter = { version = "=1.1.0", default-features = false }
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls", "ring", "webpki-roots"] }
+hyper-util = { version = "0.1.20", default-features = false, features = ["tokio", "server", "http1", "service"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+sha2 = { version = "0.11.0", default-features = false }
+tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "signal", "macros"] }
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["limit", "timeout", "trace"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
+
+[dev-dependencies]
+# The TLS peer of tests/smtp_tls.rs (D18); the same rustls lettre uses.
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 
 [lints.rust]
 unsafe_code = "forbid"

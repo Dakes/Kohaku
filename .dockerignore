@@ -1,0 +1,5 @@
+# The build context holds only what the Dockerfile copies.
+*
+!dist/amd64/kohaku
+!dist/arm64/kohaku
+!docker/data/.keep
