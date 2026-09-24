@@ -23,7 +23,7 @@ need an account.
 - **Markdown descriptions**, strictly sanitized (no raw HTML, no remote images).
 - **Screenshots** (per project, off by default), re-encoded to WebP with all metadata
   stripped and stored inside the database, with per-project quotas.
-- **"Me too" counter** so you can see which bugs hurt the most people (per project).
+- **"+1" counter** so you can see which bugs hurt the most people (per project).
 - **Optional reporter email verification** with a one-time code; verified reporters
   get notified when their bug is fixed.
 - **Email notifications** for maintainers, batched so a spam wave is one mail, not 500.

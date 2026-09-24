@@ -63,7 +63,7 @@ None (first change).
 ## Non-goals
 
 - Any user-facing feature: accounts, login, projects, reports, moderation, notifications
-  about reports, screenshots, me-too. Those arrive in changes 2–11 of the design's
+  about reports, screenshots, +1. Those arrive in changes 2–11 of the design's
   OpenSpec plan.
 - TOML config file support (see design.md: env-only for v1).
 - An admin UI. `/admin` returns 404 until `admin-auth`.
