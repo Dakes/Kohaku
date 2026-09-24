@@ -19,7 +19,7 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "toki
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 getrandom = { version = "0.4.3", default-features = false }
 hmac = { version = "0.13.0", default-features = false }
-idna_adapter = { version = "=1.1.0", default-features = false }
+idna_adapter = { version = "=1.2.2", default-features = false }
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls", "ring", "webpki-roots"] }
 hyper-util = { version = "0.1.20", default-features = false, features = ["tokio", "server", "http1", "service"] }
 qrcodegen = { version = "1.8.0", default-features = false }
