@@ -1,6 +1,9 @@
 # Rust build output (Cargo.lock is committed: this is a binary)
 /target/
 
+# Static binaries staged for the image (just smoke, CI)
+/dist/
+
 # Nix
 /result
 /result-*
@@ -8,14 +11,15 @@
 
 # Local runtime data and config (may hold secrets or reporter data)
 /data/
+/caddy/
 *.db
 *.db-wal
 *.db-shm
 *.db-journal
-/kohaku.toml
 .env
 .env.*
 !.env.example
+!.env.local.example
 
 # Fuzzing
 /fuzz/target/

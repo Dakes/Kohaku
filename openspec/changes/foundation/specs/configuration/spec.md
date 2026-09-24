@@ -58,7 +58,7 @@ non-zero.
   not valid UTF-8 is invalid. No error or log line SHALL contain a secret's value, valid or not.
 - Kohaku SHALL refuse to start while `KOHAKU_BASE_URL`, `KOHAKU_SMTP_HOST`, `KOHAKU_SMTP_USERNAME`
   or `KOHAKU_SMTP_FROM` equals its shipped `.env.example` placeholder (the base URL as
-  `compose.yaml` builds it from the `KOHAKU_DOMAIN` placeholder), naming each; the check SHALL
+  `docker-compose.yml` builds it from the `KOHAKU_DOMAIN` placeholder), naming each; the check SHALL
   cover every setting `.env.example` fills with a placeholder instead of a working value.
 - `kohaku backup` SHALL require and validate only `KOHAKU_SECRET`; `kohaku restore` and
   `kohaku healthcheck` SHALL require no setting from this spec. Any setting a command reads SHALL
@@ -69,7 +69,7 @@ non-zero.
 - **THEN** it exits non-zero naming all three (the first two as missing, no default assumed), the data directory stays empty and nothing listens on port 8080
 
 #### Scenario: Unchanged example configuration
-- **WHEN** `kohaku serve` starts with both secrets set and otherwise an unchanged copy of the shipped `.env.example` and `compose.yaml`, or with only `KOHAKU_SMTP_FROM` still at its placeholder
+- **WHEN** `kohaku serve` starts with both secrets set and otherwise an unchanged copy of the shipped `.env.example` and `docker-compose.yml`, or with only `KOHAKU_SMTP_FROM` still at its placeholder
 - **THEN** it exits non-zero naming as unchanged example values all four settings, or only `KOHAKU_SMTP_FROM`
 
 #### Scenario: Commands need only their own settings

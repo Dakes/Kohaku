@@ -34,7 +34,7 @@ these first, once, means no feature change can skip them.
 - Minimal public pages: an instance landing page on the main host and embedded static
   assets, so the pipeline has something real to serve and test.
 - Distribution: Nix flake and rustup dev setups, `just dev` live reload behind a `dev`
-  feature that cannot reach a release build, Dockerfile, shipped `compose.yaml` +
+  feature that cannot reach a release build, Dockerfile, shipped `docker-compose.yml` +
   `Caddyfile` + `.env.example`, CI, the Compose smoke test, and the gated, signed release
   workflow.
 
@@ -95,7 +95,7 @@ None (first change).
 ## Impact
 
 New repository layout (`Cargo.toml`, `src/`, `templates/`, `static/`, `migrations/`,
-`flake.nix`, `Dockerfile`, `compose.yaml`, `Caddyfile`,
+`flake.nix`, `Dockerfile`, `docker-compose.yml`, `Caddyfile`,
 `.env.example`, `.github/`, `deny.toml`, `clippy.toml`, `rust-toolchain.toml`,
 `docs/dependencies.md`).
 

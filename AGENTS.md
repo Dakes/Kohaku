@@ -112,7 +112,7 @@ until you've checked the whole path.
   settings have no default: startup fails with a clear message if missing. Optional ones
   have a documented default and reject invalid values.
 - Update the example config and the configuration section of the README.
-- Security behaviour belongs in the image, not in `compose.yaml` or the `Caddyfile`
+- Security behaviour belongs in the image, not in `docker-compose.yml` or the `Caddyfile`
   (`docker compose pull` never updates those).
 
 **New key or MAC**

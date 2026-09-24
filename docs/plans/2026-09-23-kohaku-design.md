@@ -45,7 +45,7 @@ backstop; a per-report +1 rate cap.
 | Dev env | Nix flake (devShell + package) and rustup both supported; OpenSpec from nixpkgs, no nodejs | Owner on NixOS; no unpinned npm on machines that push tags |
 | Live reload | `dev` feature serves a ~15-line same-origin polling script; no tower-livereload, no listenfd | No weaker CSP, no extra crates |
 | Domains | Optional custom domain per project on one instance; admin only on the main domain | Protects admin sessions from bugs in public-only pages. For report content the boundary is the sanitizer plus the CSP; neither may be loosened because of the split |
-| Deployment | Docker Compose is the first-class path: shipped `compose.yaml` + Caddy, CI-tested, fetched from the release tag | Owner request; security behaviour lives in the image |
+| Deployment | Docker Compose is the first-class path: shipped `docker-compose.yml` + Caddy, CI-tested, fetched from the release tag | Owner request; security behaviour lives in the image |
 | Migrations | Forward-only, runner takes a pre-migration copy, refuses newer DBs | Rollback = restore + pin previous tag |
 | Audit | `audit_log` from `foundation`; ids only; 1-year retention | Moderation must be audited from its first release |
 
@@ -863,15 +863,15 @@ quoted.
 - **Updates:** Dependabot alerts on; `.github/dependabot.yml` for github-actions, docker
   and cargo, grouped, monthly. An advisory affecting a shipped crate → patch release.
 - **Compose smoke test:** builds the image with the release Dockerfile from the build
-  job's binaries; `docker compose config` on the shipped files; brings up `compose.yaml`
-  on a fresh `kohaku-data` volume (proves `/data` ownership) with `KOHAKU_CADDY_CI`
+  job's binaries; `docker compose config` on the shipped files; brings up `docker-compose.yml`
+  on an empty `./data` prepared as the README says with `KOHAKU_CADDY_CI`
   set; waits for healthy; `admin create` prints a link; `project create` with a host,
-  then waits up to 5 s for the host map; copies Caddy's `root.crt` from `caddy-data`
+  then waits up to 5 s for the host map; copies Caddy's `root.crt` from its `/data`
   and uses `curl --cacert … --resolve` to assert: main host serves a public page, the
   project host gets a certificate and serves `/`, an unknown host's TLS handshake
   fails, `/p/{slug}` answers 308. Runs `backup -` through `docker compose exec -T` and
   `restore -` through `docker compose run --rm -T` once, as the README does (catches an
-  ENTRYPOINT regression). Same Caddy tag as `compose.yaml`.
+  ENTRYPOINT regression). Same Caddy tag as `docker-compose.yml`.
 - **Release** (tag `[0-9]+.[0-9]+.[0-9]+`, no `v` prefix, must equal `Cargo.toml`):
   - `build` (matrix x86_64/aarch64 musl): `contents: read`, no secrets, no id-token,
     `persist-credentials: false`, no cache restore. `cargo deny check advisories`, then
@@ -895,7 +895,7 @@ quoted.
     so crates are listed; bundled SQLite and libwebp versions recorded in
     `docs/dependencies.md`. If the first attestation lists no crates, drop the SBOM
     attestation.
-  - Release notes call out any `compose.yaml` or `Caddyfile` change.
+  - Release notes call out any `docker-compose.yml` or `Caddyfile` change.
 - **Release protection** (setup in `docs/releasing.md`):
   - GitHub environment `release`: `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` only as
     environment secrets; deployment refs limited to tags `[0-9]*.[0-9]*.[0-9]*`; owner
@@ -921,21 +921,21 @@ Shipped in the repo root; the README fetches the files from the release tag
 (`https://raw.githubusercontent.com/Dakes/Kohaku/refs/tags/X.Y.Z/…`; the explicit
 `refs/tags/` form cannot resolve to a branch of the same name). Security-relevant
 behaviour (headers incl. HSTS, limits, validation) lives in the image, never in
-`compose.yaml` or the `Caddyfile`, because `docker compose pull` never updates those
+`docker-compose.yml` or the `Caddyfile`, because `docker compose pull` never updates those
 files.
 
-- **`compose.yaml` kohaku:** not published on any host port. `read_only: true`,
+- **`docker-compose.yml` kohaku:** not published on any host port. `read_only: true`,
   `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, `tmpfs: /tmp`, `user` from
-  the image (nonroot, uid 65532), named volume `kohaku-data:/data` (a bind mount must be
-  `chown -R 65532:65532` first), healthcheck `test: ["CMD", "kohaku", "healthcheck"]`,
+  the image (nonroot, uid 65532), bind mount `./data:/data` (created first owned by 65532:65532,
+  mode 0700), healthcheck `test: ["CMD", "kohaku", "healthcheck"]`,
   `mem_limit: 640m` (§3 bounds), `restart: unless-stopped`,
   `KOHAKU_BASE_URL: https://${KOHAKU_DOMAIN:?}`. Image pinned by major tag
   (`dakes/kohaku:1`).
 - **caddy:** explicit tag (`caddy:2.N` or digest, same in the smoke test);
   `environment: KOHAKU_DOMAIN: ${KOHAKU_DOMAIN:?}` and `KOHAKU_CADDY_CI:
   ${KOHAKU_CADDY_CI:-}` (empty in production; CI sets `local_certs` +
-  `skip_install_trust`); named volumes `caddy-data:/data`, `caddy-config:/config`
-  (anonymous volumes lose certificates and the ACME account and can hit Let's Encrypt's
+  `skip_install_trust`); bind mounts `./caddy/data:/data`, `./caddy/config:/config`
+  (losing them loses certificates and the ACME account and can hit Let's Encrypt's
   5-per-week duplicate-certificate limit);
   `cap_drop: [ALL]` + `cap_add: [NET_BIND_SERVICE]` (the binary carries a file
   capability); `no-new-privileges`, `read_only: true`, `tmpfs: /tmp`, `mem_limit: 256m`.
@@ -943,9 +943,9 @@ files.
 - **`proxy` network:** private, dual stack, `enable_ipv6: true`; not `internal: true`
   (Kohaku needs SMTP and Caddy needs ACME). IPv4 subnet a /29 outside Docker's default
   pools and common LANs (e.g. `10.231.7.0/29`); a ULA /64 generated once and
-  hard-coded. Caddy has fixed `ipv4_address` and `ipv6_address`;
-  `KOHAKU_TRUSTED_PROXIES` lists exactly those two, in the kohaku `environment:` block
-  (not `.env`), adjacent to the subnets: one set that changes together. IPv6 clients
+  hard-coded. Only Caddy and Kohaku join it, so `KOHAKU_TRUSTED_PROXIES` lists exactly
+  those two subnets, in the kohaku `environment:` block (not `.env`), adjacent to them:
+  one set that changes together. IPv6 clients
   then reach Caddy via DNAT with their real address. Requires Docker Engine ≥ 27.
 - **Logging:** `logging: driver: local` on both services (or json-file, max-size 10m,
   max-file 3).
@@ -955,11 +955,11 @@ files.
   site blocks `respond /.well-known/kohaku/* 404`. Adding a project domain = DNS record
   first, then the admin UI; no Caddy reload. Remove hosts whose DNS no longer points
   here.
-- **`.env.example`:** every required variable not fixed in `compose.yaml`
+- **`.env.example`:** every required variable not fixed in `docker-compose.yml`
   (`KOHAKU_DOMAIN`, the one source of the main domain for both services; mail sender;
   SMTP server; the two secrets, left empty), no insecure placeholders.
 - **`.env`** (gitignored, `chmod 600`): holds every setting, secrets included.
-  `compose.yaml` passes `KOHAKU_SECRET` and `KOHAKU_SMTP_PASSWORD` as
+  `docker-compose.yml` passes `KOHAKU_SECRET` and `KOHAKU_SMTP_PASSWORD` as
   `${VAR:?message}`, so an empty one stops `docker compose up` with a hint. Anyone who
   can run `docker inspect` can read them; Docker access is root-equivalent anyway.
   `KOHAKU_SECRET` is backed up separately from database backups.
@@ -968,7 +968,7 @@ files.
   `X-Forwarded-For` (nginx `proxy_add_x_forwarded_for`, NixOS
   `recommendedProxySettings`). Kohaku's port must never be published beyond the proxy
   network.
-- `docker compose down -v` deletes certificates and all data.
+- All data and certificates live in `./data` and `./caddy` beside `docker-compose.yml`.
 
 ## 15. OpenSpec plan
 
@@ -997,11 +997,17 @@ One capability spec each, implemented as one change each, in order:
 6. `moderation` — lifecycle + transition table incl. `hidden`, bulk actions, audited
    edits, admin hard delete, notes, visibility views, public pages + API reads with
    pagination, Fixed section, bugs and feature requests told apart
+7. `notifications` — maintainer mail, coalescing, per-project opt-out
+8. `reporter-verification` — email OTP, `verification_id`, verified-email token,
+   `report_contacts`, reporter mail + one-click unsubscribe, erasure
+9. `screenshots` — pipeline, BLOB storage, quotas, admin view route
+10. `plus-one` — +1 counter, "most wanted" sort
+11. `audit-log-viewer` — viewer only
+
+After 7 the tracker is usable; 8–11 add features.
 
 Feature requests (owner decisions 2026-09-24): a finished feature uses the `fixed`
 status, labelled "Implemented" (bugs: "Fixed"); the section is "Fixed / Implemented", or
 "Fixed" in a project that takes only bugs. Lists and the API filter by kind, and every row
 shows its kind at a glance. Maintainers may change a report's kind (audited). +1 also
 sorts open lists ("most wanted"). Screenshots apply to both kinds.
-
-After 7 the tracker is usable; 8–11 add features.

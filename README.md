@@ -72,10 +72,12 @@ First point your main domain's A/AAAA records at the server and open ports 80 an
 V=1.0.0                                       # the release you install
 R=https://raw.githubusercontent.com/Dakes/Kohaku/refs/tags/$V
 mkdir kohaku && cd kohaku
-curl -fsSLO $R/compose.yaml
+curl -fsSLO $R/docker-compose.yml
 curl -fsSLO $R/Caddyfile
 curl -fsSL  $R/.env.example -o .env
 chmod 600 .env                                # it holds your secrets
+mkdir data                                    # Kohaku runs as uid 65532 in the container:
+docker run --rm -v "$PWD/data:/data" alpine:3 sh -c 'chown 65532:65532 /data && chmod 700 /data'
 
 head -c 32 /dev/urandom | base64              # your new KOHAKU_SECRET
 $EDITOR .env                                  # domain, KOHAKU_SECRET, mail sender, SMTP
@@ -115,20 +117,21 @@ project domain or other service shares. In-app clients should use the main-domai
 base `https://<main domain>/p/<slug>/api/v1`, which keeps working if a project's domain
 changes.
 
-What the shipped `compose.yaml` does for you:
+What the shipped `docker-compose.yml` does for you:
 
 - **Only Caddy is exposed** (ports 80/443). Kohaku sits on a private dual-stack
-  network with Caddy and trusts forwarded client IPs from exactly Caddy's two fixed
-  addresses. (It is not a Compose `internal: true` network, which would cut off mail
-  and certificates.)
-  The subnets, Caddy's addresses and `KOHAKU_TRUSTED_PROXIES` sit next to each other
-  in `compose.yaml` and change together.
+  network that only it and Caddy join, and trusts forwarded client IPs only from that
+  network. (It is not a Compose `internal: true` network, which would cut off mail and
+  certificates.) The subnets and `KOHAKU_TRUSTED_PROXIES` sit next to each other in
+  `docker-compose.yml` and change together.
+- **Data beside the file:** Kohaku's database and backups in `./data`, Caddy's
+  certificates in `./caddy`.
 - **Hardened containers:** read-only root filesystems, all capabilities dropped (Caddy
   keeps only the right to bind 80/443), `no-new-privileges`, non-root Kohaku, memory
   limits, healthcheck, size-capped logs. Certificates live in named volumes.
 - **No empty secrets:** `docker compose up` stops with a hint while `KOHAKU_SECRET` or
   `KOHAKU_SMTP_PASSWORD` is empty.
-- **Safe updates:** the image is pinned to the major version (`dakes/kohaku:1`), so
+- **Safe updates:** the image is pinned to the major version (e.g. `dakes/kohaku:1`), so
   `docker compose pull && docker compose up -d` brings fixes but never a breaking
   release. Migrations run automatically at startup, after Kohaku saves a copy of the
   database in `/data/backups/`.
@@ -167,14 +170,44 @@ docker compose start kohaku
 **Rolling back an update:** stop Kohaku, list the `pre-migrate-…` copies with
 `docker compose run --rm kohaku kohaku restore --list`, restore one with
 `docker compose run --rm kohaku kohaku restore /data/backups/pre-migrate-…`, pin the
-previous exact version in `compose.yaml` (e.g. `dakes/kohaku:1.2.3`) and start it.
+previous exact version in `docker-compose.yml` (e.g. `dakes/kohaku:1.2.3`) and start it.
 A newer database refuses to run on an older Kohaku. Erased data can survive in older
 backups and volume snapshots.
 
-`docker compose down -v` deletes all data and certificates.
+`restore --list` prints the file names in `/data/backups`, one per line: the
+`pre-migrate-v{version}-{unixtime}.db` copies Kohaku keeps (the two newest) and any backups
+you wrote there. Every backup and pre-migration copy keeps whatever was deleted after it
+was made, until you delete that file.
 
-Full configuration reference (SMTP, trusted proxies, limits) will follow with the
-first release.
+Caddy publishes ports 80 and 443; set `KOHAKU_HTTP_PORT` and `KOHAKU_HTTPS_PORT` in `.env`
+to use others (rootless Docker cannot publish ports below 1024).
+
+Everything lives in `./data` (database, backups) and `./caddy` (certificates) next to
+`docker-compose.yml`; back up or delete those folders to back up or delete the instance.
+
+## Configuration
+
+Kohaku reads its settings only from environment variables (with Compose: `.env`). There
+is no configuration file and no setting on the command line. Values are used exactly as
+written, never trimmed or corrected. On a problem Kohaku lists every broken setting and
+exits before touching the data directory. A required setting set to the empty string
+counts as missing.
+
+| Setting | | Format |
+|---|---|---|
+| `KOHAKU_BASE_URL` | required | `https://host` or `https://host:port`: lowercase DNS name (punycode for international names), no IP address, no path or trailing `/`, port not 443. Compose builds it from `KOHAKU_DOMAIN`. |
+| `KOHAKU_TRUSTED_PROXIES` | required | `none`, or a comma-separated list without spaces of your reverse proxy's **exact addresses** (e.g. `10.231.7.2,fd4b:7a1c:2e90:1::2`, set by Compose). CIDR blocks such as `10.231.7.0/29` only as a last resort: every address in the block may claim any client address. |
+| `KOHAKU_SECRET` | required, secret | Standard base64 with `=` padding of at least 32 random bytes: `head -c 32 /dev/urandom \| base64`. |
+| `KOHAKU_SMTP_HOST` | required | Your provider's SMTP server name (no IP address, port or scheme). Its certificate is verified. |
+| `KOHAKU_SMTP_PORT` | required | 1-65535, usually 587 (`starttls`) or 465 (`implicit`). |
+| `KOHAKU_SMTP_TLS` | required | `starttls` or `implicit`. Mail is never sent without verified TLS. |
+| `KOHAKU_SMTP_USERNAME` | required | No control characters. |
+| `KOHAKU_SMTP_PASSWORD` | required, secret | No control characters. |
+| `KOHAKU_SMTP_FROM` | required | Sender address, bare `name@domain` (no display name). |
+| `KOHAKU_PUBLIC_MAIL_PER_HOUR` | optional, default `60` | Mails per hour that unauthenticated visitors may cause, instance-wide. 1-4294967295, no leading zeros. Raise it if your SMTP provider allows more. |
+
+Development builds (`just dev`) print mail instead of sending it: there, only
+`KOHAKU_SMTP_FROM` is read and the other SMTP settings must be unset.
 
 ## Development
 
@@ -182,7 +215,8 @@ Two supported setups, both using the toolchain pinned in `rust-toolchain.toml`:
 
 ```sh
 # Nix (flake devShell, includes all dev tools)
-nix develop          # or: direnv allow
+nix develop -c $SHELL   # your own shell (zsh, fish, ...) with the dev tools
+direnv allow            # or: load them automatically on cd (direnv + nix-direnv)
 
 # Anywhere else
 rustup toolchain install                 # the toolchain from rust-toolchain.toml

@@ -1,0 +1,21 @@
+# Security-relevant API bans (change foundation D3). An exemption is an
+# `#[expect(clippy::disallowed_methods)]` in the one module allowed to use the API;
+# tests/source_scan.rs fails on an exemption anywhere else.
+disallowed-methods = [
+    { path = "std::env::var", reason = "settings are read only in config.rs, through its injected lookup" },
+    { path = "std::env::var_os", reason = "settings are read only in config.rs, through its injected lookup" },
+    { path = "std::env::vars", reason = "settings are read only in config.rs; the environment is never listed or logged" },
+    { path = "std::env::vars_os", reason = "settings are read only in config.rs; the environment is never listed or logged" },
+    { path = "axum::Router::route", reason = "routes exist only in routing::table, registered by routing::build" },
+    { path = "axum::Router::route_service", reason = "routes exist only in routing::table, registered by routing::build" },
+    { path = "axum::Router::nest", reason = "routes exist only in routing::table, registered by routing::build" },
+    { path = "axum::Router::nest_service", reason = "routes exist only in routing::table, registered by routing::build" },
+    { path = "axum::Router::merge", reason = "routes exist only in routing::table, registered by routing::build" },
+    { path = "axum::Router::fallback", reason = "routes exist only in routing::table, registered by routing::build" },
+    { path = "axum::Router::fallback_service", reason = "routes exist only in routing::table, registered by routing::build" },
+    { path = "tower_http::trace::TraceLayer::new_for_http", reason = "its default span records the URI; use routing::build's trace layer" },
+    { path = "lettre::AsyncSmtpTransport::builder_dangerous", reason = "mail goes only over verified TLS" },
+    { path = "lettre::AsyncSmtpTransport::unencrypted_localhost", reason = "mail goes only over verified TLS" },
+    { path = "lettre::transport::smtp::client::TlsParametersBuilder::dangerous_accept_invalid_certs", reason = "certificates are always verified" },
+    { path = "lettre::transport::smtp::client::TlsParametersBuilder::dangerous_accept_invalid_hostnames", reason = "host names are always verified" },
+]

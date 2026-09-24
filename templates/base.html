@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{% endblock %} · Kohaku</title>
+<link rel="stylesheet" href="{{ chrome.stylesheet }}">
+{%- if chrome.dev_reload %}
+<script src="/static/dev-reload.js" defer></script>
+{%- endif %}
+</head>
+<body>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>
+<a href="https://github.com/Dakes/Kohaku">Kohaku</a> is free software under the AGPL-3.0-or-later.
+</footer>
+</body>
+</html>
