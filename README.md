@@ -19,10 +19,11 @@ need an account.
 - **Simple lifecycle.** Pending → open → in progress → fixed, or closed (won't fix /
   duplicate) with a public reason. Fixed bugs stay listed forever. Any report can be
   hidden again, edited (audited) or deleted by the admin.
+- **Feature requests** (per project, off by default), moderated and listed like bugs.
 - **Markdown descriptions**, strictly sanitized (no raw HTML, no remote images).
 - **Screenshots** (per project, off by default), re-encoded to WebP with all metadata
   stripped and stored inside the database, with per-project quotas.
-- **"Me too" counter** so you can see which bugs hurt the most people (per project).
+- **"+1" counter** so you can see which bugs hurt the most people (per project).
 - **Optional reporter email verification** with a one-time code; verified reporters
   get notified when their bug is fixed.
 - **Email notifications** for maintainers, batched so a spam wave is one mail, not 500.

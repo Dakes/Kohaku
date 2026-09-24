@@ -177,7 +177,7 @@ every 3600 s / that value). If either is empty it SHALL take none, queue no mail
 ### Requirement: Bounded public write concurrency
 
 At most 8 database writes for unauthenticated public requests (report submission, OTP and
-me-too, added by later changes) SHALL run at once. A public write finding all 8 permits taken
++1, added by later changes) SHALL run at once. A public write finding all 8 permits taken
 SHALL get 503 Service Unavailable at once, without waiting or writing anything. A permit SHALL
 return as soon as its write ends: success, error, request deadline or client disconnect.
 Authenticated-request, CLI and background-job writes SHALL NOT take or wait for a permit.

@@ -12,9 +12,40 @@ time, even if it takes more effort.
 **No implicit defaults**, especially for secrets or anything that affects security.
 Fail at startup with a clear error so the operator notices, rather than silently
 running with an insecure fallback. The same applies elsewhere: implicit defaults lead
-to hard-to-debug behavior and dead code.
+to hard-to-debug behavior and dead code. A documented default is not implicit: see
+"Keep .env lean" for the settings that may have one.
 
 If something is unclear, don't guess and go ahead. Ask.
+
+## Keep .env lean
+
+**"No defaults" is not "make everything an environment variable."** `.env` is only for secrets and
+values that genuinely differ per deployment. Tunables — token lifetimes, grace windows, thresholds,
+expiry periods — are named constants in the module that owns them, with a comment explaining the
+number; changing one by editing code is fine. Promote a constant to `.env` only when
+a deployment needs a different value or the value is secret.
+
+Two kinds of setting:
+
+- **Required, no default:** secrets and values only the operator can know (domain, SMTP
+  server, trusted proxies). Startup fails with a clear message while one is missing.
+- **Optional, documented default:** a tunable some deployments need to change (e.g. a mail
+  budget that depends on the SMTP provider, quotas that depend on the disk). Unset means the
+  default; a set but invalid value still fails startup. Document the default in the README
+  and `.env.example` (commented out).
+
+
+## Asking
+
+**Ask before deciding anything consequential and under-specified — including
+inside a `/goal` loop.** A goal directive is not permission to guess. Names that
+land in the schema, in every audit line and in the UI are the clearest case: they
+are cheap to decide and expensive to change.
+
+## working time
+You are an AI system. In regards to development time and effort don't think in human time.
+You can write a feature in minutes not in days. I prefer you use more tokens and finish tasks.
+So don't leave work hanging. Don't leave work for later, or follow ups, if it can be done right away.
 
 ## Principles, in priority order
 
@@ -77,7 +108,9 @@ until you've checked the whole path.
   or IPs.
 
 **New config setting**
-- Required settings have no default: startup fails with a clear message if missing.
+- Decide first whether it needs to be a setting at all ("Keep .env lean"). Required
+  settings have no default: startup fails with a clear message if missing. Optional ones
+  have a documented default and reject invalid values.
 - Update the example config and the configuration section of the README.
 - Security behaviour belongs in the image, not in `compose.yaml` or the `Caddyfile`
   (`docker compose pull` never updates those).
@@ -109,7 +142,7 @@ text. A test asserts this. When debugging needs more, log opaque IDs.
 
 ## Comments
 
-Inline comments: 2 lines max, more only in exceptional cases. Explain the *why* the
+Inline comments: 2 lines max, 1 line preferred, more only in exceptional cases. Explain the *why* the
 code can't show (a gotcha, a constraint, a rejected alternative). Don't restate what
 the code already says.
 
@@ -140,9 +173,21 @@ environment. Agents never push tags, never touch release settings, and never cha
 `.github/workflows/` to reference the `release` environment from another job. Steps:
 [docs/releasing.md](docs/releasing.md).
 
-## Commits
+## Git
 
-In interactive sessions, never commit: leave the work in the working tree and the
+**branches are squashed on merge.** If a merge request, or branch is merged into main it is squashed. so clean commit history and commit messages don't matter. use one-line commit messages.
+
+**Never amend or reset a branch commit — add a new commit on top.** Merges are
+squashed, so branch commits are working history and rewriting a pushed one only
+costs a rejected push and a conflicted pull.
+
+**Never create a branch unless you were asked to.** Commit to the branch that is
+checked out, even when the change feels unrelated to it — where work lives is the
+author's call, and a helpful extra branch is one they have to find and move.
+
+### Commits
+
+In interactive sessions, never commit, unless explicitly asked to. Leave the work in the working tree and the
 maintainer commits. Autonomous agents may commit.
 
 ## Publishing

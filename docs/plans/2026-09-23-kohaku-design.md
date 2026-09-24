@@ -7,8 +7,9 @@ docs/plans/2026-09-23-security-review.md)
 
 A tiny, self-hosted bug report inbox. The admin creates projects; each project gets a
 public report form, a public list of reports (open / in progress / closed) with a
-permanent **Fixed** section, and a JSON API. Reporters never register. New reports are
-private until a maintainer approves them (moderated public). Aimed at small developers
+permanent **Fixed** section, and a JSON API. Projects can also accept feature requests
+(off by default). Reporters never register. New reports are private until a maintainer
+approves them (moderated public). Aimed at small developers
 (apps, SaaS, game mods). Open source, AGPL-3.0-or-later.
 
 **Principles:** security first (public, unauthenticated input), minimal resources,
@@ -18,14 +19,14 @@ minimal dependencies, boring and auditable code.
 accounts, HTML email, SPA frontend.
 
 **Later (not v1):** switching a project to `require_email` automatically at the pending
-backstop; a per-report me-too rate cap.
+backstop; a per-report +1 rate cap.
 
 ## 2. Decisions log
 
 | Topic | Decision | Why |
 |---|---|---|
 | Backend | Rust stable, axum + tokio, single static musl binary | Fixed by owner |
-| Frontend | Server-rendered askama templates, one CSS, small vanilla JS + PoW worker; no React | No npm supply chain, no JSON admin API, strict CSP. Reading and admin work without JS; submit, OTP and me-too need JS (PoW) |
+| Frontend | Server-rendered askama templates, one CSS, small vanilla JS + PoW worker; no React | No npm supply chain, no JSON admin API, strict CSP. Reading and admin work without JS; submit, OTP and +1 need JS (PoW) |
 | Visibility | Moderated public: `pending` is private until approved. Public = allowlist of statuses, defined once as SQLite views | Spam never goes public; a forgotten filter fails closed |
 | Takedown | Private `hidden` status reachable from every state; audited maintainer edits; admin hard delete | Approved reports can be unpublished, redacted or removed |
 | Anti-spam | PoW + honeypot + rate limits always; per-source pending cap; email OTP per project (optional). PoW is a cost, quotas and rate limits are the limits | Anonymous by default, stronger gate where wanted |
@@ -33,9 +34,10 @@ backstop; a per-report me-too rate cap.
 | Lockout | OWASP device cookie: after 10 failures only browsers without a device cookie from a prior login are locked | An attacker cannot lock the owner out |
 | Keys | Ephemeral per-boot keys by default; one external secret (`KOHAKU_SECRET`) derives TOTP seeds and source keys | A leaked DB or backup alone yields no TOTP codes and no reversible IP hashes |
 | Report content | Markdown (no raw HTML, no images), screenshots per project (off by default) | Owner request |
+| Feature requests | A report has a kind, `bug` or `feature`; feature requests per project (off by default), same moderation and limits as bugs | Owner request (2026-09-24) |
 | Screenshots | Decode in pure Rust, re-encode lossy WebP q80 via libwebp **encoder only**; libwebp decoding banned and enforced | Owner wants lossy WebP; untrusted encoded bytes never reach C (attacker-chosen pixel values still do) |
 | Screenshot storage | Re-encoded WebP as SQLite BLOBs, not files | Cascades, purge, erasure and backup cover images; no path handling |
-| Interaction | Maintainer public notes (generic "Maintainer" label) + "me too" counter (per project) | No comment threads |
+| Interaction | Maintainer public notes (generic "Maintainer" label) + "+1" counter (per project) | No comment threads |
 | 2FA | TOTP in v1: required for admin, optional for maintainers (admin can require) | Admin account sees everything |
 | TLS | Behind a reverse proxy; `KOHAKU_TRUSTED_PROXIES` is required, exact addresses (CIDR only as a last resort), no preset | Fewer crates; no fail-open IP trust |
 | Spec process | OpenSpec (spec-driven schema), one change per capability | Owner request |
@@ -56,7 +58,7 @@ reverse proxy (TLS) ──► kohaku (axum, HTTP :8080, non-root, distroless sta
                           ├── host map        Host → main router | project router | 421
                           │    ├── main       /admin/…, login/invite/reset/setup/unsubscribe,
                           │    │              /p/{slug}/…, /p/{slug}/api/v1/…, /static
-                          │    └── project    /, /new, /r/{n}, /api/v1/…, OTP, me-too, /static
+                          │    └── project    /, /new, /r/{n}, /api/v1/…, OTP, +1, /static
                           ├── SQLite (WAL)    /data/kohaku.db  (screenshots as BLOBs)
                           ├── backups         /data/backups/   (pre-migrate copies, backup temp files)
                           ├── instance lock   /data/kohaku.lock
@@ -83,10 +85,12 @@ reverse proxy (TLS) ──► kohaku (axum, HTTP :8080, non-root, distroless sta
   values.
 - `KOHAKU_BASE_URL` must be exactly `https://host[:port]`: no path, query or fragment.
   `http://localhost` only with the `dev` feature.
-- Tunable limits with documented defaults: `KOHAKU_PUBLIC_MAIL_PER_HOUR` (60),
-  `KOHAKU_PENDING_PER_SOURCE` (5), `KOHAKU_PENDING_PER_PROJECT` (500),
-  `KOHAKU_SCREENSHOT_QUOTA_PROJECT_MIB` (256), `KOHAKU_SCREENSHOT_QUOTA_INSTANCE_MIB`
-  (1024). Rate-limit budgets and PoW difficulties are constants (below, §6).
+- Optional settings, each with a documented default used when unset (owner decision
+  2026-09-24: only values that differ per deployment are settings):
+  `KOHAKU_PUBLIC_MAIL_PER_HOUR` (60; depends on the SMTP provider),
+  `KOHAKU_SCREENSHOT_QUOTA_PROJECT_MIB` (256) and `KOHAKU_SCREENSHOT_QUOTA_INSTANCE_MIB`
+  (1024; depend on the disk). Everything else is a named constant in code: pending caps
+  (5 per source per project, 500 per project), rate-limit budgets, PoW difficulties.
 
 ### CLI
 
@@ -128,7 +132,7 @@ reverse proxy (TLS) ──► kohaku (axum, HTTP :8080, non-root, distroless sta
   reader snapshot; reader checks are only early rejects. The one allowed overshoot is
   the screenshot quota (§6).
 - `sessions.last_seen` is written at most once per 5 min per session.
-- Public writes (submit, OTP, me-too) take a permit from a semaphore of 8
+- Public writes (submit, OTP, +1) take a permit from a semaphore of 8
   (`try_acquire`, else 503). Admin writes bypass it.
 - Background worker runs `PRAGMA wal_checkpoint(TRUNCATE)` hourly, after the retention
   job and after any erasure.
@@ -177,7 +181,7 @@ One module, about 40 lines:
   | `read` | public GETs (not `/static`), unsubscribe GET and POST | 300 per minute |
   | `submit` | report submit (HTML and API) | 10 per hour |
   | `otp` | OTP send and verify | 20 per hour |
-  | `me_too` | me-too | 30 per hour |
+  | `plus_one` | +1 | 30 per hour |
   | `login` | login, and invite/reset/setup token POSTs | 10 per 15 min |
   | `reset` | reset request | 5 per hour |
 
@@ -210,7 +214,7 @@ measured per format (§12).
 ### Crates (each justified in `docs/dependencies.md`)
 
 axum, tokio, tower-http (limits, timeouts, headers, trace) · rusqlite (bundled) ·
-askama · argon2, hmac, sha2, sha1 (TOTP), getrandom · lettre (rustls + ring +
+askama · argon2, hmac, sha2, sha1 (TOTP), qrcodegen (enrollment QR), getrandom · lettre (rustls + ring +
 webpki-roots, no native-tls/aws-lc) · pulldown-cmark, ammonia · image (png/jpeg/webp
 decoders only), webp (libwebp encoder only) · serde, serde_json, toml · tracing,
 tracing-subscriber. Dev-only: proptest if needed.
@@ -236,11 +240,12 @@ tracing-subscriber. Dev-only: proptest if needed.
   (invite only), expires_at, used_at. Every lookup includes purpose
 - `sessions` — SHA-256(token), user, CSRF token (random), created, last_seen, expiry
 - `projects` — slug, name, `public_host` (optional, unique), `screenshots_enabled`
-  (default off), `require_email`, `me_too_enabled`, `privacy_notice` and
+  (default off), `features_enabled` (default off), `require_email`, `plus_one_enabled`, `privacy_notice` and
   `security_contact` (optional strings, §6), `next_number` (report numbers are never
   reused, even after a hard delete)
-- `reports` — per-project number, title, markdown source, status, close_reason,
-  me_too_count, `source_key` (pending only), `approved_at` (first approval),
+- `reports` — per-project number, kind `bug|feature` (`feature` only while the project has
+  `features_enabled`), title, markdown source, status, close_reason,
+  plus_one_count, `source_key` (pending only), `approved_at` (first approval),
   `status_changed_at`, timestamps. No contact data
 - `report_contacts` — report_id PK `REFERENCES reports ON DELETE CASCADE`, email,
   notify, unsubscribe_token_hash; deleted 30 days after the report enters fixed,
@@ -249,7 +254,7 @@ tracing-subscriber. Dev-only: proptest if needed.
   log
 - `screenshots` — random 128-bit id, report (cascade), dims, WebP bytes as BLOB (last
   column)
-- `me_too` — (report_id, voter_hash) unique, epoch
+- `plus_ones` — (report_id, voter_hash) unique, epoch
 - `email_codes` — verification_id, HMAC(email), HMAC(code), attempts, expiry
 - `outbox` — kind, recipient `user_id` or address (exactly one set), `report_id` (NULL
   unless about one report, `REFERENCES reports ON DELETE CASCADE`), `project_id` (NULL
@@ -289,7 +294,7 @@ any state ──hide──► hidden (private, never purged) ──unhide──�
   audited as an approval and sets `approved_at`. Spam → hidden is allowed; its
   screenshots stay deleted. Hidden reports are never purged and never count toward the
   pending caps.
-- Hard delete removes the report row; notes, screenshot BLOBs, `me_too` rows,
+- Hard delete removes the report row; notes, screenshot BLOBs, `plus_ones` rows,
   `report_contacts` and the report's outbox rows go with it (`ON DELETE CASCADE`).
 - Maintainers may edit title, body and notes on granted projects; each edit is audited
   (ids only).
@@ -298,7 +303,7 @@ any state ──hide──► hidden (private, never purged) ──unhide──�
 
 Public = `status IN ('open','in_progress','fixed','closed')`, defined once as SQLite
 views `public_reports`, `public_notes` and `public_screenshots` (joined through
-`public_reports`). Every public and API handler, the screenshot handler and the me-too
+`public_reports`). Every public and API handler, the screenshot handler and the +1
 write read only through these views, from one module. A non-public report returns the
 same 404 as a nonexistent one.
 
@@ -344,7 +349,8 @@ Violations get 422 (counted in characters unless stated).
 | PoW MAC key | random per boot, memory only | PoW challenges |
 | Verified-email key | random per boot, memory only | verified-email token |
 | OTP key | random per boot, memory only | `email_codes` HMACs |
-| Me-too epoch key | random, memory only, rotated every 24 h | voter_hash |
+| Mail-address limiter key | random per boot, memory only | per-address mail limits (reset; OTP may reuse), label `kohaku/mail-address` |
+| +1 epoch key | random, memory only, rotated every 24 h | voter_hash |
 | Instance secret (`KOHAKU_SECRET`) | persistent, external (environment) | derives `kohaku/totp` seeds, `kohaku/source` subkey, `kohaku/keycheck` |
 | — (no key) | — | CSRF (random per session), unsubscribe (random token, stored hashed), device cookies, session and token-table tokens, recovery codes (SHA-256) |
 
@@ -430,15 +436,15 @@ Order (no body is read before the cheap checks):
   running counter: text ≤ 64 KiB, files ≤ 8 MiB, ≤ 3 file parts, ≤ 12 parts total.
   4-permit semaphore (`try_acquire`, else 503).
 - Backstop: a source (HMAC of IPv6 /48 or IPv4 /32 with the `kohaku/source` subkey)
-  may have ≤ `KOHAKU_PENDING_PER_SOURCE` (5) pending reports per project ("too many
-  pending reports from your network"). At `KOHAKU_PENDING_PER_PROJECT` (500) pending
+  may have ≤ 5 pending reports per project (constant; "too many
+  pending reports from your network"). At 500 pending (constant)
   the form closes, and reopens as soon as moderation brings the count below; no state
   is stored. Moderators clear floods with bulk actions (§8).
 
 ### Proof of work
 
-- Signed challenge: purpose (`submit | email_code | me_too`), project_id, report number
-  (me_too only), 128-bit nonce, difficulty, expiry 10 min. MAC key per boot (§5).
+- Signed challenge: purpose (`submit | email_code | plus_one`), project_id, report number
+  (plus_one only), 128-bit nonce, difficulty, expiry 10 min. MAC key per boot (§5).
 - Verifier rejects a mismatched purpose or project and checks that purpose's
   difficulty, a compile-time constant in leading zero bits; the embedded difficulty is
   only a client hint.
@@ -450,7 +456,7 @@ Order (no body is read before the cheap checks):
   starts on page load and uses a small synchronous SHA-256 in project JS (not WebCrypto
   per attempt). Each purpose's constant targets a p95 solve of 2–4 s on a low-end
   phone; measured once and documented next to the constants.
-- Submission, OTP send and me-too require JS; a `<noscript>` notice explains. No server
+- Submission, OTP send and +1 require JS; a `<noscript>` notice explains. No server
   path accepts these actions without a valid PoW.
 - PoW is a cost, not a limit.
 
@@ -476,12 +482,12 @@ Order (no body is read before the cheap checks):
 - Per-project settings, both optional: `privacy_notice` shown on the form and OTP
   step; `security_contact` shown as "report security issues privately to …".
 
-### Me too
+### +1
 
-- Lighter PoW (`me_too`, bound to the report number); one vote per voter hash per report.
-- voter_hash = HMAC(epoch_key, "metoo" ‖ report_id ‖ prefix), prefix IPv4 /32 or IPv6
+- Lighter PoW (`plus_one`, bound to the report number); one vote per voter hash per report.
+- voter_hash = HMAC(epoch_key, "plus-one" ‖ report_id ‖ prefix), prefix IPv4 /32 or IPv6
   /56 after `to_canonical()`. Rows store the epoch; other epochs are deleted at rotation
-  and startup, `me_too_count` keeps the tally. Unlinkable across reports, not
+  and startup, `plus_one_count` keeps the tally. Unlinkable across reports, not
   reversible from a DB copy, one per network per report per day.
 - Reads through the public views: same 404 for pending, spam, hidden and nonexistent.
 
@@ -551,8 +557,8 @@ Per project, off by default; HTML form only.
 
 Paths are relative to the project base: `/p/{slug}` on the main host, `/` on the
 project's `public_host`. In-app clients should use the main-host base
-`/p/{slug}/api/v1`, which survives domain changes. The page JS calls the same JSON
-endpoints for OTP and me-too.
+`/p/{slug}/api/v1`, which survives domain changes. Pages never call the JSON API (the
+CSP has no `connect-src`): forms carry the solved PoW and post normally.
 
 | Method and path | Input | Response |
 |---|---|---|
@@ -560,16 +566,16 @@ endpoints for OTP and me-too.
 | GET, POST `/new` | form (multipart when screenshots are on) | form; 303 to a "received" page |
 | GET `/r/{n}` | — | HTML detail |
 | GET `/r/{n}/s/{id}` | — | screenshot (step 8 above) |
-| GET `/api/v1/challenge` | `?purpose=submit\|email_code\|me_too[&report=n]` | `{challenge}` |
+| GET `/api/v1/challenge` | `?purpose=submit\|email_code\|plus_one[&report=n]` | `{challenge}` |
 | GET `/api/v1/reports` | `?status=…&cursor=…` | `{items: [PublicReport], next}` |
 | GET `/api/v1/reports/{n}` | — | PublicReport + `body`, `body_html`, `screenshots`, `notes: [PublicNote]` |
 | POST `/api/v1/reports` | `{title, body, pow, email_token?}` | 202 `{}` |
 | POST `/api/v1/otp/send` | `{email, pow}` | `{verification_id}` |
 | POST `/api/v1/otp/verify` | `{verification_id, email, code}` | `{email_token}` |
-| POST `/api/v1/reports/{n}/me-too` | `{pow}` | `{me_too_count}` |
+| POST `/api/v1/reports/{n}/plus-one` | `{pow}` | `{plus_one_count}` |
 
 - `PublicReport`: `number`, `title`, `status`, `close_reason` (null unless closed),
-  `me_too_count` (null when me-too is off), `created_at`, `status_changed_at` (RFC 3339
+  `plus_one_count` (null when +1 is off), `created_at`, `status_changed_at` (RFC 3339
   UTC), `url`. Detail adds `body` (markdown source), `body_html` (sanitized, as on the
   page), `screenshots` (URLs). `PublicNote`: `body`, `body_html`, `created_at`; no
   author.
@@ -664,9 +670,9 @@ endpoints for OTP and me-too.
 - 10 recovery codes of 16 base32 chars (80 bits), stored as SHA-256, consumed with
   `DELETE … WHERE user_id=? AND hash=?` checking rows affected.
 - Required for admin; optional for maintainers unless the admin requires it.
-- Enrollment shows the base32 secret and `otpauth://` URI as text (no QR crate; `data:`
-  images are blocked by `img-src 'self'`). The code must be typed back before
-  enrollment counts.
+- Enrollment shows a QR code of the `otpauth://totp/` URI (FreeOTP+ and other apps scan
+  it) as inline SVG, since `data:` images are blocked by `img-src 'self'`, plus the base32
+  secret as text. The code must be typed back before enrollment counts.
 - Changing the password, disabling or re-enrolling 2FA and regenerating recovery codes
   need the current password plus a TOTP code if enrolled.
 - Enabling 2FA revokes the user's other sessions. Turning on "require 2FA for
@@ -980,21 +986,22 @@ One capability spec each, implemented as one change each, in order:
 2. `admin-auth` — login, sessions, CSRF, logout, device cookie + lockout +
    `admin unlock`, TOTP (derived seeds, replay, recovery codes), re-auth, `tokens` table,
    password reset + `admin reset-password`
-3. `users-and-invites` — setup-link bootstrap (`admin create`, `admin reset-2fa`,
-   `admin rekey`, which all print setup links), revocable invites, grants, required 2FA
-   for maintainers, `RequireAdmin` / `ProjectAccess<Cap>`
-4. `projects` — CRUD, per-project flags, custom domain + tls-ask answers, canonical
-   redirect, `project create`
+3. `projects` — CRUD, per-project flags (incl. `features_enabled`), custom domain +
+   tls-ask answers, canonical redirect, `project create`, `RequireAdmin`
+4. `users-and-invites` — setup-link bootstrap (`admin create`, `admin reset-2fa`,
+   `admin rekey`, which all print setup links), revocable invites with grants, grants,
+   required 2FA for maintainers, `ProjectAccess<Cap>` (after `projects`: grants reference
+   projects, and tables reference only earlier migrations)
 5. `report-submission` — form, check order, PoW, honeypot, per-source cap + backstop,
-   markdown pipeline, JSON API writes
+   markdown pipeline, JSON API writes, report kind
 6. `moderation` — lifecycle + transition table incl. `hidden`, bulk actions, audited
    edits, admin hard delete, notes, visibility views, public pages + API reads with
-   pagination, Fixed section
-7. `notifications` — maintainer mail, coalescing, per-project opt-out
-8. `reporter-verification` — email OTP, `verification_id`, verified-email token,
-   `report_contacts`, reporter mail + one-click unsubscribe, erasure
-9. `screenshots` — pipeline, BLOB storage, quotas, admin view route
-10. `me-too`
-11. `audit-log` — viewer only
+   pagination, Fixed section, bugs and feature requests told apart
+
+Feature requests (owner decisions 2026-09-24): a finished feature uses the `fixed`
+status, labelled "Implemented" (bugs: "Fixed"); the section is "Fixed / Implemented", or
+"Fixed" in a project that takes only bugs. Lists and the API filter by kind, and every row
+shows its kind at a glance. Maintainers may change a report's kind (audited). +1 also
+sorts open lists ("most wanted"). Screenshots apply to both kinds.
 
 After 7 the tracker is usable; 8–11 add features.
