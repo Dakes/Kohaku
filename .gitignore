@@ -12,7 +12,6 @@
 *.db-wal
 *.db-shm
 *.db-journal
-/kohaku.toml
 .env
 .env.*
 !.env.example

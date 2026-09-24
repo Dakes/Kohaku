@@ -1,0 +1,9 @@
+# Security-relevant API bans (change foundation D3). An exemption is an
+# `#[expect(clippy::disallowed_methods)]` in the one module allowed to use the API;
+# tests/source_scan.rs fails on an exemption anywhere else.
+disallowed-methods = [
+    { path = "std::env::var", reason = "settings are read only in config.rs, through its injected lookup" },
+    { path = "std::env::var_os", reason = "settings are read only in config.rs, through its injected lookup" },
+    { path = "std::env::vars", reason = "settings are read only in config.rs; the environment is never listed or logged" },
+    { path = "std::env::vars_os", reason = "settings are read only in config.rs; the environment is never listed or logged" },
+]

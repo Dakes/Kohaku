@@ -1,0 +1,49 @@
+# Supply-chain policy (design §13, change foundation D3). `cargo deny check` runs in CI and
+# must pass; widen an allow-list only in the change that adds the crate, with its reason
+# in docs/dependencies.md.
+
+[graph]
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-gnu",
+]
+all-features = true
+
+[advisories]
+# Vulnerabilities, unmaintained and unsound crates and yanked versions all fail.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Exactly the licenses in the tree when a crate is adopted.
+allow = []
+confidence-threshold = 0.93
+
+[licenses.private]
+# Kohaku itself (publish = false) is AGPL-3.0-or-later.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    { crate = "openssl", reason = "TLS is rustls only" },
+    { crate = "openssl-sys", reason = "TLS is rustls only" },
+    { crate = "native-tls", reason = "TLS is rustls only" },
+    { crate = "aws-lc-rs", reason = "rustls uses ring" },
+    { crate = "aws-lc-sys", reason = "rustls uses ring" },
+    { crate = "rayon", reason = "no thread pools beyond tokio's" },
+    { crate = "rav1e", reason = "no AVIF encoder" },
+    { crate = "ravif", reason = "no AVIF encoder" },
+]
+
+[bans.build]
+# Every crate allowed to run a build script, as adopted; any new one fails CI.
+allow-build-scripts = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

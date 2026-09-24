@@ -2,40 +2,40 @@
 
 ## 1. Toolchain, repository skeleton and CI
 
-- [ ] 1.1 Add `rust-toolchain.toml` pinning stable `1.NN.P` (D3; distribution: Pinned toolchain and
+- [x] 1.1 Add `rust-toolchain.toml` pinning stable `1.NN.P` (D3; distribution: Pinned toolchain and
   development environments); verify `rustup show active-toolchain` names it.
-- [ ] 1.2 Create `docs/dependencies.md` with the pin and the non-Nix prerequisites (D24, D31.9;
+- [x] 1.2 Create `docs/dependencies.md` with the pin and the non-Nix prerequisites (D24, D31.9;
   Debian/Ubuntu: `build-essential`, `file`); verify `rustc --version` shows the pin and `cc` and
   `file` run.
-- [ ] 1.3 Create the `kohaku` package per D3 and D4 (`version = "0.1.0"`, AGPL-3.0-or-later,
+- [x] 1.3 Create the `kohaku` package per D3 and D4 (`version = "0.1.0"`, AGPL-3.0-or-later,
   `publish = false`, committed `Cargo.lock`); verify `cargo build --locked` passes.
-- [ ] 1.4 Add the `compile_error!` for `dev` in release builds (distribution: Development feature
+- [x] 1.4 Add the `compile_error!` for `dev` in release builds (distribution: Development feature
   excluded from release builds); verify `cargo build --release --features dev` fails with it and
   `cargo build --features dev` passes.
-- [ ] 1.5 Add `cli.rs`, a hand-written `args_os()` match (D2), with `--version`, `--help` and usage
+- [x] 1.5 Add `cli.rs`, a hand-written `args_os()` match (D2), with `--version`, `--help` and usage
   errors (operations: Command-line commands, Usage errors); verify grammar unit tests and
   `cargo run -- --version` printing `kohaku 0.1.0`.
-- [ ] 1.6 Add `flake.nix`, `flake.lock` and `packages.default` (D24; later tasks add what they
+- [x] 1.6 Add `flake.nix`, `flake.lock` and `packages.default` (D24; later tasks add what they
   create to its fileset); verify, with Nix or else the `nixos/nix` Docker image, that
   `nix flake check` and `nix build` pass.
-- [ ] 1.7 Add the devShell and `.envrc` (D24; distribution: Pinned toolchain and development
+- [x] 1.7 Add the devShell and `.envrc` (D24; distribution: Pinned toolchain and development
   environments); verify in `nix develop` that `rustc --version` shows the pin, `openspec --version`
   shows `1.13.1`, and `node` and `npm` are absent.
-- [ ] 1.8 Record in `docs/dependencies.md` the devShell's just, watchexec-cli and cargo-deny
+- [x] 1.8 Record in `docs/dependencies.md` the devShell's just, watchexec-cli and cargo-deny
   versions (for `cargo install --locked` outside Nix) and the cargo-zigbuild and zig pins; verify
   they match `--version` in `nix develop`.
-- [ ] 1.9 Add `deny.toml` (D3; distribution: Dependency policy enforced in CI); every later "adds
+- [x] 1.9 Add `deny.toml` (D3; distribution: Dependency policy enforced in CI); every later "adds
   `<crate>`" extends it and `docs/dependencies.md`; verify `cargo deny check` passes, and fails with
   `openssl-sys`, a git source or an unlisted build script.
-- [ ] 1.10 Add `clippy.toml` with the `std::env` bans (later crates bring theirs) and
+- [x] 1.10 Add `clippy.toml` with the `std::env` bans (later crates bring theirs) and
   `tests/source_scan.rs` (D3), adding `tests/` to the fileset; verify clippy `-D warnings` passes,
   the scan fails on an exemption planted outside `config.rs`, and `nix build` runs the scan.
-- [ ] 1.11 Add `ci.yml` with the `check` and `deny` jobs (D27; distribution: Continuous integration
+- [x] 1.11 Add `ci.yml` with the `check` and `deny` jobs (D27; distribution: Continuous integration
   without secrets); verify actionlint (in Docker) and a `grep` for forbidden triggers, cache
   actions, `openspec`, `npm` or `node` steps and unpinned `uses:`.
-- [ ] 1.12 Add the `build` job for both musl targets (D27, D31.8); verify actionlint and that `file`
+- [x] 1.12 Add the `build` job for both musl targets (D27, D31.8); verify actionlint and that `file`
   reports a local x86_64 musl `cargo zigbuild` binary as statically linked.
-- [ ] 1.13 Add `.github/dependabot.yml` (distribution: Dependency policy enforced in CI); verify it
+- [x] 1.13 Add `.github/dependabot.yml` (distribution: Dependency policy enforced in CI); verify it
   groups monthly `github-actions`, `docker` and `cargo` updates.
 
 ## 2. Configuration

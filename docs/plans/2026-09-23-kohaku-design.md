@@ -7,8 +7,9 @@ docs/plans/2026-09-23-security-review.md)
 
 A tiny, self-hosted bug report inbox. The admin creates projects; each project gets a
 public report form, a public list of reports (open / in progress / closed) with a
-permanent **Fixed** section, and a JSON API. Reporters never register. New reports are
-private until a maintainer approves them (moderated public). Aimed at small developers
+permanent **Fixed** section, and a JSON API. Projects can also accept feature requests
+(off by default). Reporters never register. New reports are private until a maintainer
+approves them (moderated public). Aimed at small developers
 (apps, SaaS, game mods). Open source, AGPL-3.0-or-later.
 
 **Principles:** security first (public, unauthenticated input), minimal resources,
@@ -33,6 +34,7 @@ backstop; a per-report me-too rate cap.
 | Lockout | OWASP device cookie: after 10 failures only browsers without a device cookie from a prior login are locked | An attacker cannot lock the owner out |
 | Keys | Ephemeral per-boot keys by default; one external secret (`KOHAKU_SECRET`) derives TOTP seeds and source keys | A leaked DB or backup alone yields no TOTP codes and no reversible IP hashes |
 | Report content | Markdown (no raw HTML, no images), screenshots per project (off by default) | Owner request |
+| Feature requests | A report has a kind, `bug` or `feature`; feature requests per project (off by default), same moderation and limits as bugs | Owner request (2026-09-24) |
 | Screenshots | Decode in pure Rust, re-encode lossy WebP q80 via libwebp **encoder only**; libwebp decoding banned and enforced | Owner wants lossy WebP; untrusted encoded bytes never reach C (attacker-chosen pixel values still do) |
 | Screenshot storage | Re-encoded WebP as SQLite BLOBs, not files | Cascades, purge, erasure and backup cover images; no path handling |
 | Interaction | Maintainer public notes (generic "Maintainer" label) + "me too" counter (per project) | No comment threads |
@@ -236,10 +238,11 @@ tracing-subscriber. Dev-only: proptest if needed.
   (invite only), expires_at, used_at. Every lookup includes purpose
 - `sessions` — SHA-256(token), user, CSRF token (random), created, last_seen, expiry
 - `projects` — slug, name, `public_host` (optional, unique), `screenshots_enabled`
-  (default off), `require_email`, `me_too_enabled`, `privacy_notice` and
+  (default off), `features_enabled` (default off), `require_email`, `me_too_enabled`, `privacy_notice` and
   `security_contact` (optional strings, §6), `next_number` (report numbers are never
   reused, even after a hard delete)
-- `reports` — per-project number, title, markdown source, status, close_reason,
+- `reports` — per-project number, kind `bug|feature` (`feature` only while the project has
+  `features_enabled`), title, markdown source, status, close_reason,
   me_too_count, `source_key` (pending only), `approved_at` (first approval),
   `status_changed_at`, timestamps. No contact data
 - `report_contacts` — report_id PK `REFERENCES reports ON DELETE CASCADE`, email,
@@ -983,13 +986,18 @@ One capability spec each, implemented as one change each, in order:
 3. `users-and-invites` — setup-link bootstrap (`admin create`, `admin reset-2fa`,
    `admin rekey`, which all print setup links), revocable invites, grants, required 2FA
    for maintainers, `RequireAdmin` / `ProjectAccess<Cap>`
-4. `projects` — CRUD, per-project flags, custom domain + tls-ask answers, canonical
-   redirect, `project create`
+4. `projects` — CRUD, per-project flags (incl. `features_enabled`), custom domain +
+   tls-ask answers, canonical redirect, `project create`
 5. `report-submission` — form, check order, PoW, honeypot, per-source cap + backstop,
-   markdown pipeline, JSON API writes
+   markdown pipeline, JSON API writes, report kind
 6. `moderation` — lifecycle + transition table incl. `hidden`, bulk actions, audited
    edits, admin hard delete, notes, visibility views, public pages + API reads with
-   pagination, Fixed section
+   pagination, Fixed section, bugs and feature requests told apart
+
+Feature requests, open until `report-submission` and `moderation` are proposed: the
+wording of the done state and section for features ("Fixed" suits only bugs); whether
+maintainers can change a report's kind; whether me-too counts as votes and sorts the list;
+whether screenshots apply to feature requests.
 7. `notifications` — maintainer mail, coalescing, per-project opt-out
 8. `reporter-verification` — email OTP, `verification_id`, verified-email token,
    `report_contacts`, reporter mail + one-click unsubscribe, erasure
