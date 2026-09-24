@@ -13,6 +13,7 @@ use crate::config::{MailTransport, ServeConfig};
 use crate::db::lock::{InstanceLock, LockError};
 use crate::db::migrate::{DbFailure, MIGRATIONS, MigrateError, open_and_prepare};
 use crate::db::{DataDir, Db};
+use crate::keys::RandomSourceError;
 use crate::mail::Mailer;
 use crate::mail::outbox::{ATTEMPT_TIMEOUT, KINDS, Worker};
 use crate::mail::smtp::{SmtpMailer, SmtpRoots, SmtpSetupError};
@@ -47,6 +48,7 @@ pub enum ServeError {
     Database(MigrateError),
     Mail(SmtpSetupError),
     Bind(io::Error),
+    Random(RandomSourceError),
 }
 
 impl fmt::Display for ServeError {
@@ -56,6 +58,7 @@ impl fmt::Display for ServeError {
             ServeError::Database(error) => error.fmt(f),
             ServeError::Mail(error) => error.fmt(f),
             ServeError::Bind(error) => write!(f, "cannot listen on port 8080: {}", error.kind()),
+            ServeError::Random(error) => error.fmt(f),
         }
     }
 }
@@ -114,7 +117,12 @@ pub async fn serve(
         MailerChoice::Configured => configured_mailer(&config)?,
         MailerChoice::Given(mailer) => mailer,
     };
-    let app = Arc::new(App::new(&config, Arc::new(db), Clock::System));
+    let app = Arc::new(App::new(&config, Arc::new(db), Clock::System).map_err(ServeError::Random)?);
+    // Made before listening, so the first failed login costs what every later one does.
+    let dummy = tokio::task::spawn_blocking(crate::auth::password::dummy_hash)
+        .await
+        .expect("hashing does not panic");
+    dummy.map_err(ServeError::Random)?;
     tracing::info!(
         "KOHAKU_PUBLIC_MAIL_PER_HOUR is {}",
         config.public_mail_per_hour

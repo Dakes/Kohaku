@@ -18,7 +18,7 @@ services:
       # mkdir data && docker run --rm -v "$PWD/data:/data" alpine:3 sh -c 'chown 65532:65532 /data && chmod 700 /data'
       - ./data:/data
     environment:
-      KOHAKU_BASE_URL: https://${KOHAKU_DOMAIN:?set KOHAKU_DOMAIN in .env}${KOHAKU_HTTPS_PORT:+:${KOHAKU_HTTPS_PORT}}
+      KOHAKU_BASE_URL: https://${KOHAKU_DOMAIN:?set KOHAKU_DOMAIN in .env}${KOHAKU_HTTPS_PORT:+:}${KOHAKU_HTTPS_PORT:-}
       # The proxy network below: only Caddy and Kohaku are on it.
       KOHAKU_TRUSTED_PROXIES: 10.231.7.0/29,fd4b:7a1c:2e90:1::/64
       KOHAKU_SECRET: ${KOHAKU_SECRET:?generate one with `head -c 32 /dev/urandom | base64` and put it in .env}

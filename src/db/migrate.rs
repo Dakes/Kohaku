@@ -22,11 +22,18 @@ pub struct Migration {
 }
 
 /// Every migration, in order. A released one is never edited, renumbered or removed.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "0001_foundation",
-    sql: include_str!("../../migrations/0001_foundation.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "0001_foundation",
+        sql: include_str!("../../migrations/0001_foundation.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "0002_admin_auth",
+        sql: include_str!("../../migrations/0002_admin_auth.sql"),
+    },
+];
 
 /// Pre-migration copies kept after a new one is written.
 const PRE_MIGRATE_KEPT: usize = 2;

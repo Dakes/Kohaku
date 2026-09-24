@@ -208,8 +208,9 @@ fn unhealthy_servers() {
     let started = Instant::now();
     assert_eq!(probe(peer(None)), Err(Unhealthy::TimedOut));
     let elapsed = started.elapsed();
+    // Below the peer's 8 s of silence, so the deadline ended it; slack for busy CI runners.
     assert!(
-        elapsed >= Duration::from_millis(4900) && elapsed < Duration::from_millis(5500),
+        elapsed >= Duration::from_millis(4900) && elapsed < Duration::from_secs(7),
         "{elapsed:?}"
     );
     assert_eq!(

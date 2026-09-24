@@ -185,13 +185,48 @@ to use others (rootless Docker cannot publish ports below 1024).
 Everything lives in `./data` (database, backups) and `./caddy` (certificates) next to
 `docker-compose.yml`; back up or delete those folders to back up or delete the instance.
 
+## Signing in
+
+The admin area is at `https://<main domain>/admin`, on the main domain only. One form
+takes your email address, password and, once two-factor login is on, the code from your
+authenticator app (or a recovery code). Every failed sign-in gets the same message,
+whatever was wrong. Sessions end after 12 hours without use and after 7 days at the
+latest.
+
+**Two-factor login** is required for the admin and optional for maintainers. Turn it on
+under **Account**: scan the QR code with any authenticator app (FreeOTP+, Aegis, Google
+Authenticator, …) and type back a code. You then get 10 recovery codes, shown once; each
+works once in place of a code. Keep them somewhere safe. Turning two-factor login on
+signs out your other sessions. Changing your password, setting up a new app, turning
+two-factor login off and making new recovery codes all ask for your current password
+and code again.
+
+**Lockout:** after 10 failed sign-ins from browsers that never signed in to the account,
+it is locked for 15 minutes and you get one mail about it (at most one a day). Browsers
+you signed in with before carry a cookie that exempts them, so nobody can lock you out
+of your own account; they have their own limit of 20 failures per hour.
+
+**Forgot your password?** Maintainers can ask for a reset link on the sign-in page; it
+arrives by mail, works once and expires after one hour. It never turns off two-factor
+login and signs out every session. The admin, and anyone locked out, recovers from the
+command line:
+
+```sh
+docker compose exec kohaku kohaku admin unlock --email you@example.org          # ends the lock
+docker compose exec kohaku kohaku admin reset-password --email you@example.org  # prints a reset link
+```
+
+`reset-password` prints a one-hour link and mails nothing; open it to set a new
+password. Both commands are recorded in the audit log.
+
 ## Configuration
 
 Kohaku reads its settings only from environment variables (with Compose: `.env`). There
 is no configuration file and no setting on the command line. Values are used exactly as
 written, never trimmed or corrected. On a problem Kohaku lists every broken setting and
 exits before touching the data directory. A required setting set to the empty string
-counts as missing.
+counts as missing. Commands other than `serve` read only what they need: `backup` and
+`admin unlock` only `KOHAKU_SECRET`, `admin reset-password` also `KOHAKU_BASE_URL`.
 
 | Setting | | Format |
 |---|---|---|

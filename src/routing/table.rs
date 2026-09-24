@@ -2,7 +2,7 @@
 //! security declarations; change foundation D12). `Route` has no `Default`, so a new
 //! declaration fails to compile at every entry until each states it.
 
-use axum::routing::{MethodRouter, get};
+use axum::routing::{MethodRouter, any, get, post};
 
 use super::AppState;
 use crate::limits::rate::RateClass;
@@ -30,6 +30,10 @@ pub enum RoutePath {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
     Public,
+    /// A signed-in account (admin-auth: Sessions): without a session GET and HEAD get
+    /// `303` to the login page and other methods 403; with one, every state-changing
+    /// request carries the session's CSRF token.
+    Session,
 }
 
 /// `Cache-Control` of every response (http-security: Cache-Control classes).
@@ -196,6 +200,215 @@ pub fn table() -> Vec<Route> {
             errors: ErrorFormat::Html,
         },
     ];
+    routes.extend(admin_routes());
     routes.extend(crate::dev::routes());
     routes
+}
+
+/// A reset token's shape, for the route matrix.
+const EXAMPLE_TOKEN: &str = "/admin/reset/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+/// The admin area (admin-auth; change admin-auth D3): main host only, `no-store`.
+fn admin_routes() -> Vec<Route> {
+    use crate::admin::{account, login, reset};
+    vec![
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin"),
+            example: "/admin".to_owned(),
+            methods: get(crate::admin::home),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/login"),
+            example: "/admin/login".to_owned(),
+            methods: get(login::form).post(login::submit),
+            access: Access::Public,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read, RateClass::Login],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/logout"),
+            example: "/admin/logout".to_owned(),
+            methods: post(crate::admin::logout),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/account"),
+            example: "/admin/account".to_owned(),
+            methods: get(account::show),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/account/password"),
+            example: "/admin/account/password".to_owned(),
+            methods: post(account::change_password),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Login],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/account/totp"),
+            example: "/admin/account/totp".to_owned(),
+            methods: post(account::start_totp),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Login],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/account/totp/confirm"),
+            example: "/admin/account/totp/confirm".to_owned(),
+            methods: post(account::confirm_totp),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Login],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/account/totp/disable"),
+            example: "/admin/account/totp/disable".to_owned(),
+            methods: post(account::disable_totp),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Login],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/account/recovery-codes"),
+            example: "/admin/account/recovery-codes".to_owned(),
+            methods: post(account::regenerate_codes),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Login],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/account/sessions/end-others"),
+            example: "/admin/account/sessions/end-others".to_owned(),
+            methods: post(account::end_other_sessions),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/reset"),
+            example: "/admin/reset".to_owned(),
+            methods: get(reset::request_form).post(reset::request),
+            access: Access::Public,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read, RateClass::Reset],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/reset/{token}"),
+            example: EXAMPLE_TOKEN.to_owned(),
+            methods: get(reset::link_form).post(reset::link_submit),
+            access: Access::Public,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read, RateClass::Login],
+            errors: ErrorFormat::Html,
+        },
+        // Unknown admin paths answer like known ones until signed in, then 404. A
+        // catch-all never matches an empty rest, so `/admin/` has its own entry.
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/"),
+            example: "/admin/".to_owned(),
+            methods: any(crate::admin::not_found),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read],
+            errors: ErrorFormat::Html,
+        },
+        Route {
+            host: HostKind::Main,
+            path: RoutePath::Pattern("/admin/{*rest}"),
+            example: "/admin/does-not-exist".to_owned(),
+            methods: any(crate::admin::not_found),
+            access: Access::Session,
+            cache: CacheClass::NoStore,
+            csp: Csp::Release,
+            body: BodyClass::Default,
+            multipart: Multipart::Rejected,
+            headerless: Headerless::NotExempt,
+            rate: &[RateClass::Read],
+            errors: ErrorFormat::Html,
+        },
+    ]
 }

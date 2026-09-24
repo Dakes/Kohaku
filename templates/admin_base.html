@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="admin">
+<a href="/admin">Kohaku</a>
+<span class="who">{{ nav.email }}</span>
+<a href="/admin/account">Account</a>
+<form method="post" action="/admin/logout" class="inline">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+<button type="submit">Sign out</button>
+</form>
+</nav>
+{% block admin %}{% endblock %}
+{% endblock %}

@@ -542,21 +542,22 @@ fn older_backup_is_migrated_at_the_next_start() {
     let bytes = backup_bytes(0);
     let (_dir, data) = data_dir();
     restore(&data, &mut bytes.as_slice(), 1).unwrap();
-    let newer = [
-        MIGRATIONS[0],
-        Migration {
-            version: 2,
-            name: "0002_next",
-            sql: "CREATE TABLE next (id INTEGER PRIMARY KEY) STRICT;",
-        },
-    ];
+    let current = MIGRATIONS.len() as u32;
+    let mut newer = MIGRATIONS.to_vec();
+    newer.push(Migration {
+        version: current + 1,
+        name: "next",
+        sql: "CREATE TABLE next (id INTEGER PRIMARY KEY) STRICT;",
+    });
     let conn = open_and_prepare(&data, &secret(), &newer, NOW).unwrap();
-    assert_eq!(user_version(&conn).unwrap(), 2);
+    assert_eq!(user_version(&conn).unwrap(), current + 1);
     drop(conn);
     // The pre-migration copy restores and opens under the older runner.
-    let copy = data.backups().join(format!("pre-migrate-v1-{NOW}.db"));
+    let copy = data
+        .backups()
+        .join(format!("pre-migrate-v{current}-{NOW}.db"));
     let (_dir2, older) = data_dir();
     restore(&older, &mut fs::File::open(&copy).unwrap(), 2).unwrap();
     let conn = open_and_prepare(&older, &secret(), MIGRATIONS, NOW).unwrap();
-    assert_eq!(user_version(&conn).unwrap(), 1);
+    assert_eq!(user_version(&conn).unwrap(), current);
 }

@@ -8,8 +8,10 @@
 #[cfg(all(feature = "dev", not(debug_assertions)))]
 compile_error!("the dev feature is in a release build: build releases with default features only");
 
+pub mod admin;
 pub mod assets;
 pub mod audit;
+pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod db;

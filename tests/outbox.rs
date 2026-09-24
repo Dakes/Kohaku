@@ -420,8 +420,8 @@ async fn acceptance_defines_sent() {
 async fn token_rows_are_deleted_when_sent_or_given_up() {
     let harness = setup().await;
     let db = &harness.app.db;
-    let delivered = queue(db, &harness.app.outbox, &TOKEN, "code").await;
-    let failing = queue(db, &harness.app.outbox, &TOKEN, "code").await;
+    let delivered = queue(db, &harness.app.outbox, &TOKEN, "one-time 482913").await;
+    let failing = queue(db, &harness.app.outbox, &TOKEN, "one-time 482913").await;
     let now = now_unix();
     db.write(move |tx| {
         record(tx, KINDS, delivered, Outcome::Sent, now)?;
@@ -458,7 +458,7 @@ async fn token_rows_are_deleted_when_sent_or_given_up() {
     let path = target.path().join("b.db");
     kohaku::db::backup::backup_to_file(&harness.data, &secret(), &path).unwrap();
     let bytes = std::fs::read(&path).unwrap();
-    assert!(!bytes.windows(4).any(|w| w == b"code"));
+    assert!(!bytes.windows(6).any(|w| w == b"482913"));
 }
 
 #[tokio::test]
@@ -581,4 +581,86 @@ async fn deleted_row_stays_deleted() {
         db.write(|tx| pick(tx, KINDS, now_unix())).await.unwrap(),
         Pick::Idle(None)
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn account_rows_follow_the_account() {
+    let harness = setup().await;
+    let db = &harness.app.db;
+    let kept = harness
+        .account("kept@example.org", "maintainer", false)
+        .await;
+    let deleted = harness
+        .account("gone@example.org", "maintainer", false)
+        .await;
+    let wakeup = harness.app.outbox.clone();
+    let now = now_unix();
+    let (kept_id, deleted_id) = (kept.id, deleted.id);
+    db.write(move |tx| {
+        for (id, subject) in [
+            (deleted_id, "to the deleted account"),
+            (kept_id, "to the account"),
+        ] {
+            enqueue(
+                tx,
+                &wakeup,
+                NewMail {
+                    kind: &NORMAL,
+                    recipient: Recipient::User(id),
+                    subject,
+                    body: "b",
+                    placeholder: false,
+                },
+                now,
+            )
+            .unwrap();
+        }
+        tx.execute("DELETE FROM users WHERE id = ?1", [deleted_id])?;
+        // The address is resolved at delivery time.
+        tx.execute(
+            "UPDATE users SET email = 'moved@example.org' WHERE id = ?1",
+            [kept_id],
+        )
+        .map(drop)
+    })
+    .await
+    .unwrap();
+    let refused = db
+        .write(move |tx| {
+            enqueue(
+                tx,
+                &Wakeup::default(),
+                NewMail {
+                    kind: &NORMAL,
+                    recipient: Recipient::User(999),
+                    subject: "s",
+                    body: "b",
+                    placeholder: false,
+                },
+                now,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)
+        })
+        .await;
+    assert!(refused.is_err(), "the database refuses a missing account");
+    let picked = db.write(move |tx| pick(tx, KINDS, now)).await.unwrap();
+    match picked {
+        Pick::Due(row) => {
+            assert_eq!(row.subject, "to the account");
+            assert_eq!(row.address, "moved@example.org");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(harness.count("SELECT count(*) FROM outbox").await, 1);
+    let mailer = Arc::new(FakeMailer::default());
+    let stop = start(&harness, Arc::clone(&mailer), Duration::from_secs(5));
+    wait_for("the delivery", async || {
+        harness
+            .count("SELECT count(*) FROM outbox WHERE outcome = 'sent'")
+            .await
+            == 1
+    })
+    .await;
+    stop.send(()).unwrap();
+    assert_eq!(*mailer.sent.lock().unwrap(), ["to the account"]);
 }

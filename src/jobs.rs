@@ -10,6 +10,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use tokio::sync::watch;
 
+use rusqlite::params;
+
+use crate::auth::session;
 use crate::db::migrate::DbFailure;
 use crate::db::{DataDir, Db};
 use crate::mail::outbox::{MailKind, give_up_expired};
@@ -139,6 +142,27 @@ pub async fn retention(
         .await;
     if let Err(failure) = audit {
         step_failed("audit_log", failure);
+    }
+    let sign_in = db
+        .write(move |tx| {
+            tx.execute(
+                "DELETE FROM sessions WHERE last_seen <= ?1 - ?2 OR created_at <= ?1 - ?3",
+                params![now, session::IDLE_SECONDS, session::ABSOLUTE_SECONDS],
+            )?;
+            tx.execute(
+                "DELETE FROM tokens
+                 WHERE purpose = 'reset' AND (used_at IS NOT NULL OR expires_at <= ?1)",
+                [now],
+            )?;
+            tx.execute(
+                "DELETE FROM known_devices WHERE created_at <= ?1 - ?2",
+                params![now, session::DEVICE_SECONDS],
+            )
+            .map_err(DbFailure::from)
+        })
+        .await;
+    if let Err(failure) = sign_in {
+        step_failed("sign-in state", failure);
     }
     let dirs = [data.root().to_path_buf(), data.backups()];
     let removed = tokio::task::spawn_blocking(move || {

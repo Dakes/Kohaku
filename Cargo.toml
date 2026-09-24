@@ -13,17 +13,20 @@ publish = false
 dev = []
 
 [dependencies]
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "password-hash"] }
 askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
-axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "matched-path"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "matched-path", "form"] }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 getrandom = { version = "0.4.3", default-features = false }
 hmac = { version = "0.13.0", default-features = false }
 idna_adapter = { version = "=1.1.0", default-features = false }
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls", "ring", "webpki-roots"] }
 hyper-util = { version = "0.1.20", default-features = false, features = ["tokio", "server", "http1", "service"] }
+qrcodegen = { version = "1.8.0", default-features = false }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+sha1 = { version = "0.11.0", default-features = false }
 sha2 = { version = "0.11.0", default-features = false }
 tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "signal", "macros"] }
 tower = { version = "0.5.3", default-features = false, features = ["util"] }
@@ -41,6 +44,13 @@ unsafe_code = "forbid"
 # The mail worker catches a panic per delivery attempt, which needs unwinding.
 [profile.dev]
 panic = "unwind"
+
+# Unoptimized argon2 takes about 0.5 s per hash; the tests hash hundreds of times.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 [profile.release]
 panic = "unwind"

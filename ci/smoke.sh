@@ -48,13 +48,17 @@ docker build --quiet --platform linux/amd64 -t "$image" "$root" >/dev/null
 entrypoint=$(docker inspect --format '{{json .Config.Entrypoint}}' "$image")
 [ "$entrypoint" = "null" ] || fail "the image declares an ENTRYPOINT: $entrypoint"
 
-# An unedited template never runs: compose refuses empty secrets.
-cp "$root/.env.example" "$work/.env.template"
-if docker compose --project-name "$project" --project-directory "$work" --env-file "$work/.env.template" \
-    -f "$work/docker-compose.yml" config --quiet 2>"$work/err"; then
-    fail "compose accepted the unedited .env.example"
-fi
-grep -q KOHAKU_SECRET "$work/err" || fail "the refusal does not name KOHAKU_SECRET"
+# An unedited template never runs: compose refuses each empty secret. Older Compose
+# names only the first one it meets, so each is checked with the other filled in.
+for missing in KOHAKU_SECRET KOHAKU_SMTP_PASSWORD; do
+    grep -v -e '^KOHAKU_SECRET=' -e '^KOHAKU_SMTP_PASSWORD=' "$root/.env.example" > "$work/.env.template"
+    printf 'KOHAKU_SECRET=filled\nKOHAKU_SMTP_PASSWORD=filled\n%s=\n' "$missing" >> "$work/.env.template"
+    if docker compose --project-name "$project" --project-directory "$work" --env-file "$work/.env.template" \
+        -f "$work/docker-compose.yml" config --quiet 2>"$work/err"; then
+        fail "compose accepted .env.example with $missing empty"
+    fi
+    grep -q "$missing" "$work/err" || fail "the refusal does not name $missing"
+done
 
 wait_healthy() {
     for _ in $(seq 1 90); do
@@ -107,6 +111,24 @@ if curl --silent --noproxy '*' --cacert "$work/root.crt" --resolve "unknown.smok
     --output /dev/null "https://unknown.smoke.test/"; then
     fail "TLS handshake succeeded for a name Kohaku does not serve"
 fi
+
+# The admin area answers through Caddy: the sign-in form, and a redirect to it.
+curl_main --dump-header "$work/login.headers" --output "$work/login" "https://$domain/admin/login"
+grep -q '^HTTP/[0-9.]* 200' "$work/login.headers" || fail "sign-in page status"
+grep -q 'action="/admin/login"' "$work/login" || fail "not the sign-in page"
+! grep -qi '^set-cookie' "$work/login.headers" || fail "the sign-in page sets a cookie"
+admin=$(curl_main --output /dev/null --write-out '%{http_code} %{redirect_url}' "https://$domain/admin")
+[ "$admin" = "303 https://$domain/admin/login" ] || fail "/admin without a session: $admin"
+
+# The account commands run beside serve and refuse an unknown address with status 1.
+for command in unlock reset-password; do
+    if compose exec -T kohaku kohaku admin "$command" --email nobody@smoke.test \
+        > "$work/admin.out" 2> "$work/admin.err"; then
+        fail "admin $command accepted an unknown address"
+    fi
+    grep -q 'no account has that email address' "$work/admin.err" || fail "admin $command: $(cat "$work/admin.err")"
+    [ ! -s "$work/admin.out" ] || fail "admin $command wrote to stdout"
+done
 
 # Forged X-Forwarded-For through Caddy: every request still counts against the client's
 # own read budget (300 per minute), so a burst of 400 ends in 429s.

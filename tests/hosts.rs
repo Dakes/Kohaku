@@ -264,16 +264,22 @@ async fn attacker_probes_for_the_admin_area() {
     let reference = harness.get(MAIN_HOST, "/does-not-exist").await;
     assert_eq!(reference.status(), StatusCode::NOT_FOUND);
     let reference = body_text(reference).await;
-    for path in [
-        "/admin",
-        "/admin/login",
-        "/p/demo",
-        "/p/demo/api/v1/reports",
-    ] {
+    for path in ["/p/demo", "/p/demo/api/v1/reports"] {
         let response = harness.get(MAIN_HOST, path).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         assert_eq!(body_text(response).await, reference, "{path}");
     }
+    let mut admin = Vec::new();
+    for path in ["/admin", "/admin/users"] {
+        let response = harness.get(MAIN_HOST, path).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "{path}");
+        admin.push((
+            header_values(&response, "location"),
+            body_text(response).await,
+        ));
+    }
+    assert_eq!(admin[0], admin[1]);
+    assert_eq!(admin[0].0, ["/admin/login"]);
 }
 
 #[tokio::test]

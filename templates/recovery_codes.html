@@ -1,0 +1,14 @@
+{% extends "admin_base.html" %}
+{% block title %}Recovery codes{% endblock %}
+{% block admin %}
+<h1>Recovery codes</h1>
+<p>{{ intro }}</p>
+<p>Each code works once in place of an authenticator code. Store them somewhere safe
+now: this page is the only time they are shown.</p>
+<ul class="codes">
+{%- for code in codes %}
+<li><code>{{ code }}</code></li>
+{%- endfor %}
+</ul>
+<p><a href="/admin/account">Back to the account</a></p>
+{% endblock %}

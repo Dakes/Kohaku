@@ -279,6 +279,40 @@ const SHIPPED_SAMPLES: Samples = &[
              VALUES ('cli', NULL, 'instance.restore', 'instance', NULL, unixepoch())",
         ),
     ),
+    (
+        "users",
+        Some(
+            "INSERT INTO users (id, email, password_hash, role, totp_nonce, totp_last_step,
+                 failed_logins, locked_until, created_at)
+             VALUES (7, 'admin@example.org', '$argon2id$x', 'admin', zeroblob(16), 5, 2, 9, 1)",
+        ),
+    ),
+    (
+        "sessions",
+        Some(
+            "INSERT INTO sessions (token_hash, user_id, csrf_token, created_at, last_seen,
+                 pending_totp_nonce)
+             VALUES (zeroblob(32), 7, zeroblob(32), 1, 2, zeroblob(16))",
+        ),
+    ),
+    (
+        "known_devices",
+        Some(
+            "INSERT INTO known_devices (user_id, token_hash, created_at)
+             VALUES (7, zeroblob(32), 1)",
+        ),
+    ),
+    (
+        "recovery_codes",
+        Some("INSERT INTO recovery_codes (user_id, code_hash) VALUES (7, zeroblob(32))"),
+    ),
+    (
+        "tokens",
+        Some(
+            "INSERT INTO tokens (purpose, token_hash, user_id, expires_at)
+             VALUES ('reset', zeroblob(32), 7, 3)",
+        ),
+    ),
 ];
 
 /// Migrates a new database to each version k, inserts a sample row into every table,
@@ -483,4 +517,35 @@ fn a_failed_copy_blocks_the_upgrade() {
             "pre-migrate-v1-1795000000.db"
         ]
     );
+}
+
+#[test]
+fn outbox_rebuild_keeps_deleted_ids_unused() {
+    let (_dir, data) = data_dir();
+    let conn = prepare(&data, &MIGRATIONS[..1]).unwrap();
+    for _ in 0..3 {
+        conn.execute(SHIPPED_SAMPLES[1].1.unwrap(), []).unwrap();
+    }
+    conn.execute("DELETE FROM outbox WHERE id = 3", []).unwrap();
+    drop(conn);
+    let conn = prepare(&data, MIGRATIONS).unwrap();
+    conn.execute(SHIPPED_SAMPLES[1].1.unwrap(), []).unwrap();
+    let ids: Vec<i64> = conn
+        .prepare("SELECT id FROM outbox ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(ids, [1, 2, 4]);
+    // The rebuilt table refuses a row naming both recipients or neither, and an
+    // account that does not exist.
+    for (user, address) in [("7", "'a@example.com'"), ("NULL", "NULL"), ("99", "NULL")] {
+        let sql = format!(
+            "INSERT INTO outbox (kind, user_id, address, subject, body, priority, token,
+                 placeholder, next_attempt_at, queued_at, expires_at)
+             VALUES ('sample', {user}, {address}, 's', 'b', 'normal', 0, 0, 1, 1, 2)"
+        );
+        assert!(conn.execute(&sql, []).is_err(), "{user} {address}");
+    }
 }

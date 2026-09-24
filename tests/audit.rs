@@ -267,6 +267,7 @@ fn entry_and_change_are_atomic() {
 fn target_table(target: Target) -> Option<&'static str> {
     match target {
         Target::Instance => None,
+        Target::User(_) => Some("users"),
     }
 }
 
@@ -274,16 +275,26 @@ fn target_table(target: Target) -> Option<&'static str> {
 fn actor_table(actor: Actor) -> Option<&'static str> {
     match actor {
         Actor::Cli => None,
+        Actor::User { .. } => Some("users"),
     }
 }
 
 #[test]
 fn audited_kinds_live_in_autoincrement_tables() {
     let (_dir, conn) = database();
-    let tables: Vec<&str> = [target_table(Target::Instance), actor_table(Actor::Cli)]
-        .into_iter()
-        .flatten()
-        .collect();
+    let user = Actor::User {
+        id: 1,
+        role: kohaku::auth::Role::Admin,
+    };
+    let tables: Vec<&str> = [
+        target_table(Target::Instance),
+        target_table(Target::User(1)),
+        actor_table(Actor::Cli),
+        actor_table(user),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     for table in tables {
         let sql: String = conn
             .query_row(
