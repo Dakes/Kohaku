@@ -7,6 +7,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use crate::auth::commands::{AccountCommandError, reset_password, unlock};
 use crate::config::{Config, ConfigError, process_environment};
 use crate::db::DataDir;
 use crate::db::backup::{
@@ -14,6 +15,7 @@ use crate::db::backup::{
 };
 use crate::healthcheck::Unhealthy;
 use crate::logging::{self, Stream};
+use crate::routing::urls::Urls;
 use crate::serve::{Listen, MailerChoice, ServeError, serve};
 
 /// The version printed by `--version`; release tags must equal it (CI checks).
@@ -29,6 +31,10 @@ Usage:
   kohaku restore <file>     Replace the database with a backup (server stopped)
   kohaku restore -          Replace the database with a backup read from standard input
   kohaku restore --list     List the files in /data/backups
+  kohaku admin unlock --email <address>
+                            End an account's sign-in lock
+  kohaku admin reset-password --email <address>
+                            Print a one-hour password reset link for an account
   kohaku --version          Print the version
   kohaku --help             Print this help
   kohaku <command> --help   Print this help
@@ -67,6 +73,9 @@ pub enum Command {
     Backup(BackupTarget),
     Restore(RestoreSource),
     RestoreList,
+    /// The email address as given; normalized when looked up.
+    AdminUnlock(String),
+    AdminResetPassword(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -126,6 +135,25 @@ where
             )))),
             _ => Err(UsageError),
         },
+        [name, subcommand, rest @ ..] if *name == "admin" => {
+            let command: fn(String) -> Command = if *subcommand == "unlock" {
+                Command::AdminUnlock
+            } else if *subcommand == "reset-password" {
+                Command::AdminResetPassword
+            } else {
+                return Err(UsageError);
+            };
+            match rest {
+                _ if command_help(rest) => Ok(Invocation::Help),
+                [flag, address] if *flag == "--email" => match address.to_str() {
+                    Some(address) if !address.is_empty() && !address.starts_with('-') => {
+                        Ok(Invocation::Run(command(address.to_owned())))
+                    }
+                    _ => Err(UsageError),
+                },
+                _ => Err(UsageError),
+            }
+        }
         _ => Err(UsageError),
     }
 }
@@ -175,6 +203,9 @@ pub enum CommandError {
     Serve(ServeError),
     Runtime(std::io::Error),
     Unhealthy(Unhealthy),
+    Account(AccountCommandError),
+    /// Writing the reset link to stdout failed.
+    Output(std::io::Error),
 }
 
 impl fmt::Display for CommandError {
@@ -187,6 +218,8 @@ impl fmt::Display for CommandError {
             CommandError::Serve(error) => error.fmt(f),
             CommandError::Runtime(error) => write!(f, "cannot start the runtime: {}", error.kind()),
             CommandError::Unhealthy(error) => error.fmt(f),
+            CommandError::Account(error) => error.fmt(f),
+            CommandError::Output(error) => write!(f, "cannot write to stdout: {}", error.kind()),
         }
     }
 }
@@ -210,10 +243,10 @@ where
             crate::healthcheck::probe(SocketAddr::from((Ipv4Addr::LOCALHOST, PORT)))
                 .map_err(CommandError::Unhealthy)
         }
-        (Command::Backup(BackupTarget::File(path)), Config::Backup(config)) => {
+        (Command::Backup(BackupTarget::File(path)), Config::Secret(config)) => {
             backup_to_file(data, &config.secret, &path).map_err(CommandError::Backup)
         }
-        (Command::Backup(BackupTarget::Stdout), Config::Backup(config)) => {
+        (Command::Backup(BackupTarget::Stdout), Config::Secret(config)) => {
             backup_to_writer(data, &config.secret, stdout).map_err(CommandError::Backup)
         }
         (Command::Restore(RestoreSource::File(path)), _) => {
@@ -250,7 +283,26 @@ where
                 ))
                 .map_err(CommandError::Serve)
         }
-        (Command::Serve | Command::Backup(_), _) => {
+        (Command::AdminUnlock(email), Config::Secret(config)) => {
+            unlock(data, &config.secret, &email, crate::time::now_unix())
+                .map_err(CommandError::Account)
+        }
+        (Command::AdminResetPassword(email), Config::ResetLink(config)) => {
+            let urls = Urls::new(&config.base_url);
+            let link = reset_password(data, &config.secret, &urls, &email, crate::time::now_unix())
+                .map_err(CommandError::Account)?;
+            stdout
+                .write_all(format!("{link}\n").as_bytes())
+                .and_then(|()| stdout.flush())
+                .map_err(CommandError::Output)
+        }
+        (
+            Command::Serve
+            | Command::Backup(_)
+            | Command::AdminUnlock(_)
+            | Command::AdminResetPassword(_),
+            _,
+        ) => {
             unreachable!("Config::load returns the configuration its command needs")
         }
     }
@@ -321,8 +373,23 @@ mod tests {
             Ok(Run(Command::Restore(RestoreSource::File("a.db".into()))))
         );
         assert_eq!(p(&["restore", "--list"]), Ok(Run(Command::RestoreList)));
+        assert_eq!(
+            p(&["admin", "unlock", "--email", "a@b.test"]),
+            Ok(Run(Command::AdminUnlock("a@b.test".into())))
+        );
+        assert_eq!(
+            p(&["admin", "reset-password", "--email", " A@B.test"]),
+            Ok(Run(Command::AdminResetPassword(" A@B.test".into())))
+        );
         for command in ["serve", "healthcheck", "backup", "restore"] {
             assert_eq!(p(&[command, "--help"]), Ok(Help), "{command} --help");
+        }
+        for command in ["unlock", "reset-password"] {
+            assert_eq!(
+                p(&["admin", command, "--help"]),
+                Ok(Help),
+                "{command} --help"
+            );
         }
     }
 
@@ -353,6 +420,19 @@ mod tests {
             &["restore", "a.db", "b.db"],
             &["restore", "--LIST"],
             &["restore", "--"],
+            &["admin"],
+            &["admin", "--help"],
+            &["admin", "unlock"],
+            &["admin", "unlock", "--email"],
+            &["admin", "unlock", "--email", "a@b.test", "extra"],
+            &["admin", "unlock", "a@b.test"],
+            &["admin", "unlock", "--email", ""],
+            &["admin", "unlock", "--email", "--help"],
+            &["admin", "unlock", "--EMAIL", "a@b.test"],
+            &["admin", "Unlock", "--email", "a@b.test"],
+            &["admin", "frobnicate"],
+            &["admin", "reset-password"],
+            &["admin", "reset_password", "--email", "a@b.test"],
         ];
         for args in malformed {
             assert_eq!(p(args), Err(UsageError), "{args:?}");
@@ -382,6 +462,8 @@ mod tests {
             "kohaku restore <file>",
             "kohaku restore -",
             "kohaku restore --list",
+            "kohaku admin unlock --email <address>",
+            "kohaku admin reset-password --email <address>",
             "kohaku --version",
             "kohaku --help",
             "kohaku <command> --help",

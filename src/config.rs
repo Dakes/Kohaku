@@ -52,7 +52,10 @@ pub fn process_environment(name: &str) -> Option<OsString> {
 /// The settings a command needs; `restore`, `restore --list` and `healthcheck` need none.
 pub enum Config {
     Serve(ServeConfig),
-    Backup(BackupConfig),
+    /// `backup` and `admin unlock`.
+    Secret(SecretConfig),
+    /// `admin reset-password`, which prints a link.
+    ResetLink(ResetLinkConfig),
     None,
 }
 
@@ -65,8 +68,13 @@ pub struct ServeConfig {
     pub public_mail_per_hour: u32,
 }
 
-pub struct BackupConfig {
+pub struct SecretConfig {
     pub secret: InstanceSecret,
+}
+
+pub struct ResetLinkConfig {
+    pub secret: InstanceSecret,
+    pub base_url: BaseUrl,
 }
 
 /// How the outbox worker delivers mail in this build.
@@ -149,7 +157,10 @@ impl Config {
         };
         let config = match command {
             Command::Serve => reader.serve().map(Config::Serve),
-            Command::Backup(_) => reader.backup().map(Config::Backup),
+            Command::Backup(_) | Command::AdminUnlock(_) => {
+                reader.secret_only().map(Config::Secret)
+            }
+            Command::AdminResetPassword(_) => reader.reset_link().map(Config::ResetLink),
             Command::Restore(_) | Command::RestoreList | Command::Healthcheck => Some(Config::None),
         };
         match config {
@@ -266,9 +277,19 @@ where
         self.required(SECRET, parse_instance_secret)
     }
 
-    fn backup(&mut self) -> Option<BackupConfig> {
+    fn secret_only(&mut self) -> Option<SecretConfig> {
         let secret = self.secret()?;
-        Some(BackupConfig { secret })
+        Some(SecretConfig { secret })
+    }
+
+    fn reset_link(&mut self) -> Option<ResetLinkConfig> {
+        let secret = self.secret();
+        let base_url =
+            self.required_not_placeholder(BASE_URL, placeholders::BASE_URL, parse_base_url);
+        Some(ResetLinkConfig {
+            secret: secret?,
+            base_url: base_url?,
+        })
     }
 
     fn serve(&mut self) -> Option<ServeConfig> {
@@ -1121,14 +1142,36 @@ mod tests {
         );
         assert!(matches!(
             load(&backup, &env(&[(SECRET, TEST_SECRET)])),
-            Ok(Config::Backup(_))
+            Ok(Config::Secret(_))
         ));
         let garbage = env(&[
             (SECRET, TEST_SECRET),
             (BASE_URL, "not a url"),
             (SMTP_PORT, "x"),
         ]);
-        assert!(matches!(load(&backup, &garbage), Ok(Config::Backup(_))));
+        assert!(matches!(load(&backup, &garbage), Ok(Config::Secret(_))));
+
+        let unlock = Command::AdminUnlock("a@b.test".to_owned());
+        assert!(matches!(load(&unlock, &garbage), Ok(Config::Secret(_))));
+        let names = |command: &Command, vars: &HashMap<String, OsString>| -> Vec<&'static str> {
+            variables(
+                &load(command, vars)
+                    .err()
+                    .expect("a setting is missing")
+                    .problems,
+            )
+        };
+        assert_eq!(names(&unlock, &empty), [SECRET]);
+        let reset = Command::AdminResetPassword("a@b.test".to_owned());
+        assert_eq!(names(&reset, &env(&[(SECRET, TEST_SECRET)])), [BASE_URL]);
+        assert_eq!(names(&reset, &empty), [SECRET, BASE_URL]);
+        let placeholder = env(&[(SECRET, TEST_SECRET), (BASE_URL, placeholders::BASE_URL)]);
+        assert_eq!(names(&reset, &placeholder), [BASE_URL]);
+        let valid = env(&[
+            (SECRET, TEST_SECRET),
+            (BASE_URL, "https://kohaku.example.org"),
+        ]);
+        assert!(matches!(load(&reset, &valid), Ok(Config::ResetLink(_))));
     }
 
     #[test]

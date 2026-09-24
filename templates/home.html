@@ -1,0 +1,9 @@
+{% extends "admin_base.html" %}
+{% block title %}Admin{% endblock %}
+{% block admin %}
+<h1>Kohaku</h1>
+<p>You are signed in as {{ nav.email }} ({{ role }}).</p>
+{%- if !totp_enrolled %}
+<p class="notice">Two-factor login is off for this account. <a href="/admin/account">Turn it on</a>.</p>
+{%- endif %}
+{% endblock %}

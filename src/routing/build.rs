@@ -27,7 +27,7 @@ use tower_http::trace::TraceLayer;
 
 use super::AppState;
 use super::hosts::{HostEntry, request_host};
-use super::table::{CacheClass, Csp, ErrorFormat, HostKind, Route, RoutePath};
+use super::table::{Access, CacheClass, Csp, ErrorFormat, HostKind, Route, RoutePath};
 use super::urls::Urls;
 use crate::http::fetch::{admin_isolation_allows, admin_isolation_rejection, origin_layer};
 use crate::http::{ClientAddr, PeerAddr, RoutedHost, body, errors, headers};
@@ -100,11 +100,12 @@ pub fn build(table: Vec<Route>, app: &AppState) -> Service_ {
 }
 
 /// A route's method router under its declared layers, outermost first: cache class,
-/// error body, deadline, origin check, rate classes, multipart, body cap.
+/// error body, deadline, origin check, rate classes, multipart, body cap, access.
 fn layered(route: Route, app: &AppState) -> axum::routing::MethodRouter<AppState> {
     let Route {
         host,
         methods,
+        access,
         cache,
         csp,
         body: body_class,
@@ -115,6 +116,14 @@ fn layered(route: Route, app: &AppState) -> axum::routing::MethodRouter<AppState
         ..
     } = route;
     let cap = body_class.cap();
+    // The guard runs inside the body cap, so the CSRF check reads a capped body.
+    let methods = match access {
+        Access::Public => methods,
+        Access::Session => methods.layer::<_, Infallible>(from_fn_with_state(
+            Arc::clone(app),
+            crate::auth::session::layer,
+        )),
+    };
     let methods = methods
         .layer::<_, Infallible>(DefaultBodyLimit::max(cap))
         .layer::<_, Infallible>(RequestBodyLimitLayer::new(cap));

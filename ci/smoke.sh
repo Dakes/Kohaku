@@ -108,6 +108,24 @@ if curl --silent --noproxy '*' --cacert "$work/root.crt" --resolve "unknown.smok
     fail "TLS handshake succeeded for a name Kohaku does not serve"
 fi
 
+# The admin area answers through Caddy: the sign-in form, and a redirect to it.
+curl_main --dump-header "$work/login.headers" --output "$work/login" "https://$domain/admin/login"
+grep -q '^HTTP/[0-9.]* 200' "$work/login.headers" || fail "sign-in page status"
+grep -q 'action="/admin/login"' "$work/login" || fail "not the sign-in page"
+! grep -qi '^set-cookie' "$work/login.headers" || fail "the sign-in page sets a cookie"
+admin=$(curl_main --output /dev/null --write-out '%{http_code} %{redirect_url}' "https://$domain/admin")
+[ "$admin" = "303 https://$domain/admin/login" ] || fail "/admin without a session: $admin"
+
+# The account commands run beside serve and refuse an unknown address with status 1.
+for command in unlock reset-password; do
+    if compose exec -T kohaku kohaku admin "$command" --email nobody@smoke.test \
+        > "$work/admin.out" 2> "$work/admin.err"; then
+        fail "admin $command accepted an unknown address"
+    fi
+    grep -q 'no account has that email address' "$work/admin.err" || fail "admin $command: $(cat "$work/admin.err")"
+    [ ! -s "$work/admin.out" ] || fail "admin $command wrote to stdout"
+done
+
 # Forged X-Forwarded-For through Caddy: every request still counts against the client's
 # own read budget (300 per minute), so a burst of 400 ends in 429s.
 : > "$work/burst.conf"

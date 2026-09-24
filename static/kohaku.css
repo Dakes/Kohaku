@@ -51,3 +51,57 @@ footer {
   color: var(--muted);
   font-size: 0.875rem;
 }
+
+nav.admin {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: baseline;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+nav.admin .who {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+form.inline {
+  display: inline;
+}
+
+form.stacked {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 24rem;
+  margin-bottom: 1.5rem;
+}
+
+input,
+button {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+}
+
+button {
+  justify-self: start;
+}
+
+.error {
+  color: #b3261e;
+}
+
+.notice {
+  color: var(--muted);
+}
+
+svg.qr {
+  max-width: 100%;
+  height: auto;
+}
+
+code.secret,
+ul.codes code {
+  font-size: 1.1rem;
+  letter-spacing: 0.05em;
+}

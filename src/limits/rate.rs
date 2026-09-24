@@ -19,17 +19,23 @@ pub const MAX_BUCKETS: usize = 100_000;
 /// A rate-limit class of routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RateClass {
-    /// Every GET and HEAD to a public page or API route.
+    /// Every GET and HEAD to a page or API route.
     Read,
+    /// Every POST checking a password, a second factor or a single-use account token.
+    Login,
+    /// `POST /admin/reset`.
+    Reset,
 }
 
 impl RateClass {
-    pub const ALL: &'static [RateClass] = &[RateClass::Read];
+    pub const ALL: &'static [RateClass] = &[RateClass::Read, RateClass::Login, RateClass::Reset];
 
     /// Name in the per-minute rejection counters.
     pub fn name(self) -> &'static str {
         match self {
             RateClass::Read => "read",
+            RateClass::Login => "login",
+            RateClass::Reset => "reset",
         }
     }
 
@@ -37,6 +43,8 @@ impl RateClass {
     fn budget(self) -> Budget {
         match self {
             RateClass::Read => Budget::per(300, Duration::from_secs(60)),
+            RateClass::Login => Budget::per(10, Duration::from_secs(15 * 60)),
+            RateClass::Reset => Budget::per(5, Duration::from_secs(60 * 60)),
         }
     }
 
@@ -44,6 +52,7 @@ impl RateClass {
     pub fn applies_to(self, method: &Method) -> bool {
         match self {
             RateClass::Read => method == Method::GET || method == Method::HEAD,
+            RateClass::Login | RateClass::Reset => method == Method::POST,
         }
     }
 }
@@ -106,12 +115,15 @@ pub fn mail_source(address: IpAddr) -> Prefix {
 pub enum Key {
     Class(RateClass, Prefix),
     MailSource(Prefix),
+    /// A per-address mail bucket: the address's HMAC under a per-boot key.
+    MailAddress([u8; 32]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Overflow {
     Class(RateClass),
     MailSource,
+    MailAddress,
 }
 
 /// A bucket: its budget and theoretical arrival time since the limiter's start.
@@ -158,6 +170,13 @@ impl Demand {
         Demand {
             keys,
             overflow: (Overflow::Class(class), budget),
+        }
+    }
+
+    pub fn mail_address(key: [u8; 32], budget: Budget) -> Demand {
+        Demand {
+            keys: vec![(Key::MailAddress(key), budget)],
+            overflow: (Overflow::MailAddress, budget),
         }
     }
 

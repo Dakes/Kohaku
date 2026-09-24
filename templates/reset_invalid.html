@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Link invalid or expired{% endblock %}
+{% block content %}
+<h1>Link invalid or expired</h1>
+<p>This link is not valid: it was used already, is older than one hour, or a newer link
+replaced it. <a href="/admin/reset">Ask for a new link.</a></p>
+{% endblock %}

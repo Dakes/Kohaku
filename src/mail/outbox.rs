@@ -55,7 +55,11 @@ pub struct MailKind {
 }
 
 /// Every mail kind; later changes add theirs.
-pub const KINDS: &[&MailKind] = &[];
+pub const KINDS: &[&MailKind] = &[
+    &crate::auth::mail::RESET_LINK,
+    &crate::auth::mail::LOCKOUT,
+    &crate::auth::mail::PASSWORD_CHANGED,
+];
 
 /// Wakes the worker when a row is queued.
 #[derive(Debug, Clone, Default)]
@@ -67,9 +71,11 @@ impl Wakeup {
     }
 }
 
-/// Who a row goes to. An account recipient arrives with the change creating accounts.
+/// Who a row goes to.
 pub enum Recipient {
     Address(String),
+    /// An account, delivered to its address at delivery time; its rows go with it.
+    User(i64),
 }
 
 pub struct NewMail<'a> {
@@ -102,16 +108,22 @@ pub fn enqueue(
     mail: NewMail<'_>,
     now: i64,
 ) -> Result<i64, EnqueueError> {
-    let Recipient::Address(address) = mail.recipient;
-    validate_recipient(&address).map_err(|_| EnqueueError::InvalidRecipient)?;
+    let (user_id, address) = match mail.recipient {
+        Recipient::Address(address) => {
+            validate_recipient(&address).map_err(|_| EnqueueError::InvalidRecipient)?;
+            (None, Some(address))
+        }
+        Recipient::User(id) => (Some(id), None),
+    };
     let kind = mail.kind;
     let id = tx.query_row(
-        "INSERT INTO outbox (kind, address, subject, body, priority, token, placeholder,
-             next_attempt_at, queued_at, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)
+        "INSERT INTO outbox (kind, user_id, address, subject, body, priority, token,
+             placeholder, next_attempt_at, queued_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10)
          RETURNING id",
         params![
             kind.name,
+            user_id,
             address,
             subject(mail.subject),
             mail.body,
@@ -222,9 +234,11 @@ pub fn pick(tx: &Transaction<'_>, kinds: &[&'static MailKind], now: i64) -> rusq
     )?;
     let due = tx
         .query_row(
-            "SELECT id, kind, address, subject, body, priority, attempts FROM outbox
-             WHERE outcome IS NULL AND next_attempt_at <= ?1 AND address IS NOT NULL
-             ORDER BY priority = 'security' DESC, next_attempt_at, queued_at, id
+            "SELECT o.id, o.kind, coalesce(o.address, u.email), o.subject, o.body,
+                 o.priority, o.attempts
+             FROM outbox o LEFT JOIN users u ON u.id = o.user_id
+             WHERE o.outcome IS NULL AND o.next_attempt_at <= ?1
+             ORDER BY o.priority = 'security' DESC, o.next_attempt_at, o.queued_at, o.id
              LIMIT 1",
             [now],
             |row| {

@@ -49,17 +49,20 @@ adoption (7 licenses, 13 build scripts); a new one fails CI until someone accept
 
 | Crate | Declared features | Resolved | Why |
 |---|---|---|---|
+| argon2 0.6.0 | `alloc`, `password-hash` | same; pulls `password-hash` 0.6.1 (+ `phc`), `blake2`, `base64ct` | argon2id password hashing as PHC strings (RustCrypto, no C); salts come from `getrandom`, so no `getrandom`/`rand_core` feature |
 | askama 0.16.1 | `derive`, `std` | + `alloc` | Compile-time HTML templates, escaping on by default |
-| axum 0.8.9 | `http1`, `tokio`, `matched-path` | same | Routing and extractors; `matched-path` gives tracing the route pattern |
+| axum 0.8.9 | `http1`, `tokio`, `matched-path`, `form` | same | Routing and extractors; `matched-path` gives tracing the route pattern; `form` parses the admin forms (pulls `serde_urlencoded` with `ryu`, and `serde_path_to_error`) |
 | base64 0.23.1 | `std` | + `alloc`, `default`, `simd-unsafe` (from lettre) | Strict padded decoding of `KOHAKU_SECRET` |
 | getrandom 0.4.3 | none | none | The OS random source: per-boot keys, tokens, temporary names |
 | hmac 0.13.0 | none | none | HMAC-SHA256 for every derived value, `verify_slice` in constant time |
 | hyper-util 0.1.20 | `tokio`, `server`, `http1`, `service` | + `default` | HTTP/1.1 connections with a header read timeout (not `axum::serve`); no `server-auto`, so no h2 |
 | idna_adapter =1.1.0 | none | `compiled_data`, `default` | Pins lettre's IDNA backend to unicode-rs: 104 crates instead of 120 with the default 1.2 (no ICU4X: `icu_*`, `zerovec`, `yoke`, `tinystr`, … 21 crates) |
 | lettre 0.11.23 | `smtp-transport`, `builder`, `tokio1-rustls`, `ring`, `webpki-roots` | + `rustls`, `tokio1` | SMTP over rustls (ring) with compiled Mozilla roots; no `pool`, no native TLS |
+| qrcodegen 1.8.0 | none (it has none) | none | The TOTP enrollment QR code (Nayuki; MIT, no dependencies, no build script); Kohaku draws it as inline SVG |
 | rusqlite 0.40.2 | `bundled` | + `modern_sqlite` | SQLite compiled in (no system library) |
 | serde 1.0.229 | `std`, `derive` | + `serde_derive` | JSON bodies |
 | serde_json 1.0.151 | `std` | same | JSON bodies |
+| sha1 0.11.0 | none | none | HMAC-SHA1 for TOTP (RFC 6238): authenticator apps only support SHA-1 |
 | sha2 0.11.0 | none | none | SHA-256 for HMAC, token hashes and asset names |
 | tokio 1.53.1 | `rt-multi-thread`, `net`, `time`, `sync`, `signal`, `macros` | + `default` (from axum/hyper-util) | Runtime, listener, timers, semaphores, SIGTERM; no `io-util` |
 | tower 0.5.3 | `util` | + `make`, `tokio` (from axum) | The dispatcher and header layer wrap the routers outside axum |
@@ -69,6 +72,9 @@ adoption (7 licenses, 13 build scripts); a new one fails CI until someone accept
 
 Dev-dependency: rustls 0.23.45 (`ring`, `std`, `tls12`), the version lettre uses, for the
 local TLS peer of `tests/smtp_tls.rs`.
+
+argon2 and blake2 are built with `opt-level = 3` in the dev profile too (`Cargo.toml`):
+unoptimized, one hash takes about 0.5 s, and the tests hash hundreds of times.
 
 **Bundled SQLite:** 3.53.2 (`libsqlite3-sys` 0.38.2). Review it on every rusqlite bump.
 

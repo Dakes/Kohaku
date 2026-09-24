@@ -122,8 +122,9 @@ transaction: token row plus mail row, or placeholder row. Consuming:
 then the password write, session and device deletes, other tokens marked used, mail, audit —
 one transaction. The reset mail kind's give-up action marks its token used.
 
-**D10. Mail kinds.** `account.reset_link` (normal priority, token-bearing, 1 h),
-`account.lockout` and `account.password_changed` (security, 24 h). Bodies are constants
+**D10. Mail kinds.** `account_reset_link` (normal priority, token-bearing, 1 h),
+`account_lockout` and `account_password_changed` (security, 24 h); kind names take
+letters and `_` only (outbox `CHECK`). Bodies are constants
 with the main-host origin, a UTC time (`YYYY-MM-DD HH:MM UTC`) and the link.
 
 **D11. CLI.** The grammar gains `admin unlock|reset-password --email <address>`. Both run
@@ -151,6 +152,10 @@ writer.
 4. **Per-address limit in memory under a per-boot key** (§8 names only the limit): new key
    `kohaku/mail-address` added to §5's inventory; OTP can reuse it.
 5. **Recovery codes accepted in the code field** (§8 implies it): no separate form.
+6. **`/admin/` is its own route** (D3): a catch-all never matches an empty rest, so the
+   bare trailing-slash path gets the same `Session` entry as `/admin/{*rest}`.
+7. **Placeholder reset rows go to a fixed `.invalid` address**, so no row ever holds a
+   requested address (request-limits: Per-address reset limit).
 
 ## Risks / Trade-offs
 

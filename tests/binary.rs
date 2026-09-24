@@ -54,6 +54,8 @@ fn version_and_help_need_no_configuration() {
         &["serve", "--help"],
         &["healthcheck", "--help"],
         &["restore", "--help"],
+        &["admin", "unlock", "--help"],
+        &["admin", "reset-password", "--help"],
     ] {
         let help = run(args, &[], dir.path());
         assert!(help.status.success(), "{args:?}");
@@ -65,6 +67,8 @@ fn version_and_help_need_no_configuration() {
             "backup",
             "restore",
             "restore --list",
+            "admin unlock",
+            "admin reset-password",
         ] {
             assert!(text.contains(name));
         }
@@ -88,6 +92,13 @@ fn malformed_invocations() {
         &["serve", "--secret", "abc"],
         &["serve", "--password", "abc"],
         &["healthcheck", "extra"],
+        &["admin"],
+        &["admin", "unlock"],
+        &["admin", "unlock", "--email"],
+        &["admin", "unlock", "--email", "a@b.test", "extra"],
+        &["admin", "unlock", "a@b.test"],
+        &["admin", "frobnicate"],
+        &["admin", "reset-password", "a@b.test"],
     ];
     for args in malformed {
         for vars in [&env[..], &[]] {

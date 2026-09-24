@@ -437,3 +437,108 @@ async fn attacker_floods_the_health_endpoint() {
     drop(permits);
     assert!(capture.text().is_empty(), "{}", capture.text());
 }
+
+fn login_from(peer: &str, email: &str) -> axum::http::Request<Body> {
+    let browser = Browser {
+        peer: peer.to_owned(),
+        ..Browser::new()
+    };
+    form_request(
+        "/admin/login",
+        &browser,
+        &[("email", email), ("password", "a guess!!!!!!")],
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn attacker_guesses_passwords_from_one_network() {
+    let harness = Harness::new();
+    let mut statuses = Vec::new();
+    for n in 0..11 {
+        let email = format!("user{n}@example.org");
+        statuses.push(
+            harness
+                .send(login_from("203.0.113.5:40000", &email))
+                .await
+                .status(),
+        );
+    }
+    assert!(
+        statuses[..10].iter().all(|s| *s == StatusCode::OK),
+        "{statuses:?}"
+    );
+    assert_eq!(statuses[10], StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        harness.app.password_checks.load(Ordering::SeqCst),
+        10,
+        "the 11th hashed nothing"
+    );
+    assert_eq!(
+        harness.app.counters.take(),
+        [(Reason::RateLimited(RateClass::Login), 1)]
+    );
+    // Reads draw from their own class.
+    assert_eq!(
+        harness
+            .send(from_peer(
+                request("GET", MAIN_HOST, "/admin/login")
+                    .body(Body::empty())
+                    .unwrap(),
+                "203.0.113.5:40000"
+            ))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    // One token back every 90 seconds.
+    harness.advance(90);
+    let status = harness
+        .send(login_from("203.0.113.5:40000", "x@example.org"))
+        .await
+        .status();
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn attacker_spreads_over_an_ipv6_48() {
+    let harness = Harness::new();
+    let mut processed = 0;
+    for net in 1..=9 {
+        for n in 0..10 {
+            let peer = format!("[2001:db8:5:{net}::{}]:40000", n + 1);
+            let status = harness
+                .send(login_from(&peer, "x@example.org"))
+                .await
+                .status();
+            if status == StatusCode::OK {
+                processed += 1;
+            } else {
+                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+            }
+        }
+    }
+    assert_eq!(processed, 80);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reset_requests_have_their_own_class() {
+    let harness = Harness::new();
+    let mut statuses = Vec::new();
+    for n in 0..6 {
+        let browser = Browser {
+            peer: "203.0.113.5:40000".to_owned(),
+            ..Browser::new()
+        };
+        let email = format!("user{n}@example.org");
+        let request = form_request("/admin/reset", &browser, &[("email", &email)]);
+        statuses.push(harness.send(request).await.status());
+    }
+    assert_eq!(statuses[..5], [StatusCode::OK; 5]);
+    assert_eq!(statuses[5], StatusCode::TOO_MANY_REQUESTS);
+    // The login class of the same network is untouched.
+    let status = harness
+        .send(login_from("203.0.113.5:40000", "x@example.org"))
+        .await
+        .status();
+    assert_eq!(status, StatusCode::OK);
+}

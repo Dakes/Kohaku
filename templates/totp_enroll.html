@@ -1,0 +1,21 @@
+{% extends "admin_base.html" %}
+{% block title %}Set up two-factor login{% endblock %}
+{% block admin %}
+<h1>Set up two-factor login</h1>
+{%- if failed %}
+<p class="error" role="alert">That code is not right. Check the time on your phone and try the current code.</p>
+{%- endif %}
+<p>Scan this code with your authenticator app, or type the key into it by hand.</p>
+<svg class="qr" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {{ qr.size }} {{ qr.size }}" width="{{ qr.size * 6 }}" height="{{ qr.size * 6 }}" shape-rendering="crispEdges" role="img" aria-label="QR code of the key">
+<rect width="{{ qr.size }}" height="{{ qr.size }}" fill="#ffffff"/>
+<path fill="#000000" d="{% for (x, y) in qr.dark %}M{{ x }} {{ y }}h1v1h-1z{% endfor %}"/>
+</svg>
+<p>Key: <code class="secret">{{ seed }}</code></p>
+<form method="post" action="/admin/account/totp/confirm" class="stacked">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+<label for="code">Code the app shows now</label>
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="6">
+<button type="submit">Turn on two-factor login</button>
+</form>
+<p>Turning it on signs out every other session and replaces any recovery codes.</p>
+{% endblock %}

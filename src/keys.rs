@@ -2,7 +2,7 @@
 //! (change foundation D6; design §5 Key inventory).
 
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
@@ -20,15 +20,21 @@ pub const KEY_BYTES: usize = 32;
 pub enum Purpose {
     /// The database's keycheck: shows whether the configured secret made the database.
     Keycheck,
+    /// TOTP seeds, from the account id and its enrollment nonce (admin-auth).
+    Totp,
+    /// Keys of the per-address mail buckets, under a per-boot key (request-limits).
+    MailAddress,
 }
 
 impl Purpose {
     /// Every purpose, for the uniqueness test.
-    pub const ALL: &'static [Purpose] = &[Purpose::Keycheck];
+    pub const ALL: &'static [Purpose] = &[Purpose::Keycheck, Purpose::Totp, Purpose::MailAddress];
 
     pub fn label(self) -> &'static str {
         match self {
             Purpose::Keycheck => "kohaku/keycheck",
+            Purpose::Totp => "kohaku/totp",
+            Purpose::MailAddress => "kohaku/mail-address",
         }
     }
 }
@@ -56,6 +62,7 @@ fn verify(key: &[u8], purpose: Purpose, fields: &[&[u8]], tag: &[u8]) -> bool {
 
 /// The decoded `KOHAKU_SECRET`: only ever an HMAC-SHA256 key. Deliberately implements
 /// neither `Debug` nor `Display`, so it cannot reach a log line or an error by accident.
+/// `Clone` only so the running server keeps its own copy for TOTP seeds.
 ///
 /// ```compile_fail
 /// let secret = kohaku::keys::InstanceSecret::from_base64("").unwrap();
@@ -66,6 +73,7 @@ fn verify(key: &[u8], purpose: Purpose, fields: &[&[u8]], tag: &[u8]) -> bool {
 /// let secret = kohaku::keys::InstanceSecret::from_base64("").unwrap();
 /// println!("{secret}");
 /// ```
+#[derive(Clone)]
 pub struct InstanceSecret(Vec<u8>);
 
 /// `KOHAKU_SECRET` is not standard padded base64 of at least 32 bytes. Carries nothing
@@ -130,6 +138,42 @@ impl std::fmt::Display for RandomSourceError {
 }
 
 impl std::error::Error for RandomSourceError {}
+
+/// Whether `a` equals `b`, in time independent of where they differ (CSRF tokens).
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let difference = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    std::hint::black_box(difference) == 0
+}
+
+/// SHA-256 of `bytes`: the stored form of session, device, token and recovery values.
+pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+    use sha2::Digest as _;
+    Sha256::digest(bytes).into()
+}
+
+/// A new random token of 256 bits, and its text: base64url without padding (43
+/// characters).
+pub fn random_token() -> Result<([u8; KEY_BYTES], String), RandomSourceError> {
+    let mut bytes = [0u8; KEY_BYTES];
+    random_bytes(&mut bytes)?;
+    Ok((bytes, URL_SAFE_NO_PAD.encode(bytes)))
+}
+
+/// Length of a token's text.
+pub const TOKEN_TEXT_LEN: usize = 43;
+
+/// Whether `text` has the shape of a token: exactly 43 base64url characters. Checked
+/// before any query, so other values never reach the database.
+pub fn is_token_text(text: &str) -> bool {
+    text.len() == TOKEN_TEXT_LEN
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && URL_SAFE_NO_PAD.decode(text).is_ok()
+}
 
 /// Fills `buf` from the operating system's cryptographically secure random source.
 pub fn random_bytes(buf: &mut [u8]) -> Result<(), RandomSourceError> {
@@ -243,6 +287,32 @@ mod tests {
         assert!(!secret(1).matches_keycheck(&secret(2).keycheck()));
         assert!(!secret(1).matches_keycheck(&secret(1).keycheck()[..31]));
         assert!(!secret(1).matches_keycheck(&[]));
+    }
+
+    #[test]
+    fn constant_time_comparison() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd"));
+        assert!(!ct_eq(b"abc", b"ab"));
+        assert!(ct_eq(b"", b""));
+    }
+
+    #[test]
+    fn token_shape() {
+        let (bytes, text) = random_token().unwrap();
+        assert!(is_token_text(&text));
+        assert_eq!(URL_SAFE_NO_PAD.decode(&text).unwrap(), bytes);
+        assert_ne!(random_token().unwrap().1, text);
+        for bad in [
+            "",
+            &text[..42],
+            &format!("{text}A"),
+            &format!("{}+", &text[..42]),
+            &format!("{}=", &text[..42]),
+            &format!("{}é", &text[..41]),
+        ] {
+            assert!(!is_token_text(bad), "{bad}");
+        }
     }
 
     #[test]

@@ -315,3 +315,68 @@ async fn read_only_commands_and_background_work_record_nothing() {
     retention(&db, &data, KINDS, now).await;
     assert_eq!(entries(&data), 1);
 }
+
+#[tokio::test]
+async fn expired_sign_in_state_is_purged() {
+    let harness = Harness::new();
+    let now = now_unix();
+    let mut sql = format!(
+        "INSERT INTO users (id, email, role, created_at) VALUES (1, 'm@example.org', 'maintainer', {now});"
+    );
+    for (n, (created, seen)) in [
+        (now - HOUR, now - 13 * HOUR),
+        (now - 8 * DAY, now - HOUR),
+        (now - HOUR, now - 60),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        sql.push_str(&format!(
+            "INSERT INTO sessions (id, token_hash, user_id, csrf_token, created_at, last_seen)
+             VALUES ({}, randomblob(32), 1, randomblob(32), {created}, {seen});",
+            n + 1
+        ));
+    }
+    for (n, (used, expires)) in [
+        (format!("{}", now - 60), now + HOUR),
+        ("NULL".to_owned(), now - 1),
+        ("NULL".to_owned(), now + HOUR),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        sql.push_str(&format!(
+            "INSERT INTO tokens (id, purpose, token_hash, user_id, expires_at, used_at)
+             VALUES ({}, 'reset', randomblob(32), 1, {expires}, {used});",
+            n + 1
+        ));
+    }
+    for (n, created) in [now - 366 * DAY, now - 10 * DAY].into_iter().enumerate() {
+        sql.push_str(&format!(
+            "INSERT INTO known_devices (id, user_id, token_hash, created_at)
+             VALUES ({}, 1, randomblob(32), {created});",
+            n + 1
+        ));
+    }
+    exec(&harness, sql).await;
+    retention(&harness.app.db, &harness.data, KINDS, now).await;
+    let ids = |table: &'static str| {
+        let db = Arc::clone(&harness.app.db);
+        async move {
+            db.read(move |c| {
+                c.prepare(&format!("SELECT id FROM {table} ORDER BY id"))?
+                    .query_map([], |r| r.get::<_, i64>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(ids("sessions").await, [3], "only the fresh session");
+    assert_eq!(ids("tokens").await, [3], "only the valid token");
+    assert_eq!(
+        ids("known_devices").await,
+        [2],
+        "only the 10-day-old device cookie"
+    );
+}

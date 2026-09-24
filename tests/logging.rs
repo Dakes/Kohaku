@@ -169,3 +169,78 @@ async fn flood_produces_one_line_per_reason() {
     assert!(log.contains("unknown host (421): 1000"), "{log}");
     assert!(!log.contains("u1.example"));
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn sign_in_flows_log_no_credentials() {
+    let capture = LogCapture::default();
+    let _guard = capture.install();
+    let harness = Harness::new();
+    let account = harness
+        .account("alice@example.com", "maintainer", false)
+        .await;
+    let browser = harness.sign_in(&account).await;
+    let (password, code) = ("s3cret-marker-passw0rd", "ZZZZ-YYYY-XXXX-WWWW");
+    for _ in 0..11 {
+        harness
+            .login_as(&mut Browser::new(), "alice@example.com", password, code)
+            .await;
+    }
+    harness
+        .post_as(
+            &browser,
+            "/admin/account/password",
+            &[
+                ("current_password", password),
+                ("new_password", "n3w-marker-passw0rd"),
+                ("new_password_again", "n3w-marker-passw0rd"),
+            ],
+        )
+        .await;
+    harness
+        .post_as(
+            &browser,
+            "/admin/account/totp",
+            &[("current_password", PASSWORD)],
+        )
+        .await;
+    harness
+        .post_as(
+            &browser,
+            "/admin/account/totp/confirm",
+            &[("code", "123456")],
+        )
+        .await;
+    harness
+        .send(form_request(
+            "/admin/reset",
+            &Browser::new(),
+            &[("email", "alice@example.com")],
+        ))
+        .await;
+    let token = "t0kenMarkerAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    harness
+        .get(MAIN_HOST, &format!("/admin/reset/{token}"))
+        .await;
+    harness
+        .send(form_request(
+            &format!("/admin/reset/{token}"),
+            &Browser::new(),
+            &[("password", password), ("password_again", password)],
+        ))
+        .await;
+    harness.app.counters.flush();
+    let log = capture.text();
+    for marker in [
+        "alice",
+        password,
+        "n3w-marker",
+        code,
+        "t0kenMarker",
+        browser.session.as_deref().unwrap(),
+        browser.device.as_deref().unwrap(),
+        &browser.csrf,
+        "198.18.",
+    ] {
+        assert!(!log.contains(marker), "log contains {marker}:\n{log}");
+    }
+}

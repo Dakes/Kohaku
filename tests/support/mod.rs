@@ -152,7 +152,7 @@ impl Harness {
         let (dir, data) = data_dir();
         let writer = open_and_prepare(&data, &config.secret, MIGRATIONS, 1_800_000_000).unwrap();
         let db = Arc::new(Db::new(writer, &data.database()).unwrap());
-        let app = Arc::new(App::new(&config, db, kohaku::time::Clock::manual()));
+        let app = Arc::new(App::new(&config, db, kohaku::time::Clock::manual()).unwrap());
         let service = build(routes, &app);
         Harness {
             app,
@@ -409,5 +409,258 @@ pub async fn read_some(stream: &tokio::net::TcpStream, buf: &mut [u8]) -> std::i
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
             Err(e) => return Err(e),
         }
+    }
+}
+
+// Accounts and sessions (change admin-auth D13)
+
+use kohaku::auth::totp::{Seed, code, step_at};
+
+/// The password of every test account.
+pub const PASSWORD: &str = "correct horse battery staple";
+
+/// An account written directly into the database.
+pub struct TestAccount {
+    pub id: i64,
+    pub email: String,
+    pub nonce: Option<[u8; 16]>,
+}
+
+/// A browser: its cookies, the session's CSRF token and its own network address, so
+/// tests stay within the per-network login budget.
+#[derive(Clone)]
+pub struct Browser {
+    pub session: Option<String>,
+    pub device: Option<String>,
+    pub csrf: String,
+    pub peer: String,
+}
+
+impl Browser {
+    /// A browser that never signed in, at a new address.
+    pub fn new() -> Browser {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Browser {
+            session: None,
+            device: None,
+            csrf: String::new(),
+            // 198.18.0.0/15, the benchmarking range: 131 072 addresses.
+            peer: format!(
+                "198.{}.{}.{}:40000",
+                18 + (n >> 16) % 2,
+                (n >> 8) & 255,
+                n & 255
+            ),
+        }
+    }
+
+    pub fn cookie_header(&self) -> String {
+        let mut cookies = Vec::new();
+        if let Some(session) = &self.session {
+            cookies.push(format!("__Host-kohaku_session={session}"));
+        }
+        if let Some(device) = &self.device {
+            cookies.push(format!("__Host-kohaku_device={device}"));
+        }
+        cookies.join("; ")
+    }
+
+    /// Takes the cookies a response sets.
+    pub fn absorb(&mut self, response: &Response<Body>) {
+        for value in header_values(response, "set-cookie") {
+            let pair = value.split(';').next().unwrap();
+            let (name, token) = pair.split_once('=').unwrap();
+            let token = (!token.is_empty()).then(|| token.to_owned());
+            match name {
+                "__Host-kohaku_session" => self.session = token,
+                "__Host-kohaku_device" => self.device = token,
+                other => panic!("unexpected cookie {other}"),
+            }
+        }
+    }
+}
+
+impl Default for Browser {
+    fn default() -> Browser {
+        Browser::new()
+    }
+}
+
+/// Percent-encodes a form value.
+pub fn form_encode(fields: &[(&str, &str)]) -> String {
+    let encode = |text: &str| {
+        text.bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                    char::from(b).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect::<String>()
+    };
+    fields
+        .iter()
+        .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// A same-origin form POST from `browser` to the main host.
+pub fn form_request(path: &str, browser: &Browser, fields: &[(&str, &str)]) -> Request<Body> {
+    let mut builder = request("POST", MAIN_HOST, path)
+        .header("origin", format!("https://{MAIN_HOST}"))
+        .header("sec-fetch-site", "same-origin")
+        .header("content-type", "application/x-www-form-urlencoded");
+    let cookies = browser.cookie_header();
+    if !cookies.is_empty() {
+        builder = builder.header("cookie", cookies);
+    }
+    from_peer(
+        builder.body(Body::from(form_encode(fields))).unwrap(),
+        &browser.peer,
+    )
+}
+
+/// The value of the first `name="csrf"` field of a page.
+pub fn csrf_of(page: &str) -> String {
+    let at = page
+        .find("name=\"csrf\" value=\"")
+        .expect("the page has a CSRF field");
+    let rest = &page[at + "name=\"csrf\" value=\"".len()..];
+    rest[..rest.find('"').unwrap()].to_owned()
+}
+
+impl Harness {
+    /// Wall time of the harness clock.
+    pub fn now(&self) -> i64 {
+        self.app.clock.unix()
+    }
+
+    pub fn advance(&self, seconds: u64) {
+        self.app
+            .clock
+            .advance(std::time::Duration::from_secs(seconds));
+    }
+
+    /// Runs `sql` with `params` on the writer.
+    pub async fn exec(&self, sql: &'static str, params: Vec<rusqlite::types::Value>) -> usize {
+        self.app
+            .db
+            .write(move |tx| tx.execute(sql, rusqlite::params_from_iter(params)))
+            .await
+            .unwrap()
+    }
+
+    /// One integer from `sql` on a reader.
+    pub async fn count(&self, sql: &'static str) -> i64 {
+        self.app
+            .db
+            .read(move |c| c.query_row(sql, [], |r| r.get::<_, i64>(0)))
+            .await
+            .unwrap()
+    }
+
+    /// A new account with [`PASSWORD`], TOTP enrolled when `totp`.
+    pub async fn account(&self, email: &str, role: &str, totp: bool) -> TestAccount {
+        let hash = kohaku::auth::password::hash_password(PASSWORD).unwrap();
+        let nonce = totp.then(|| {
+            let mut nonce = [0u8; 16];
+            kohaku::keys::random_bytes(&mut nonce).unwrap();
+            nonce
+        });
+        let (email_owned, role, now) = (email.to_owned(), role.to_owned(), self.now());
+        let id = self
+            .app
+            .db
+            .write(move |tx| {
+                tx.query_row(
+                    "INSERT INTO users (email, password_hash, role, totp_nonce, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id",
+                    rusqlite::params![email_owned, hash, role, nonce.map(|n| n.to_vec()), now],
+                    |r| r.get(0),
+                )
+            })
+            .await
+            .unwrap();
+        TestAccount {
+            id,
+            email: email.to_owned(),
+            nonce,
+        }
+    }
+
+    /// The account's TOTP code `offset` steps from now.
+    pub fn code(&self, account: &TestAccount, offset: i64) -> String {
+        let seed = Seed::derive(
+            &secret(),
+            account.id,
+            &account.nonce.expect("TOTP enrolled"),
+        );
+        code(&seed, step_at(self.now()) + offset)
+    }
+
+    /// Posts the login form from `browser` and takes its cookies.
+    pub async fn login_as(
+        &self,
+        browser: &mut Browser,
+        email: &str,
+        password: &str,
+        code: &str,
+    ) -> Response<Body> {
+        let response = self
+            .send(form_request(
+                "/admin/login",
+                browser,
+                &[("email", email), ("password", password), ("code", code)],
+            ))
+            .await;
+        browser.absorb(&response);
+        response
+    }
+
+    /// Signs `account` in from a new browser with a fresh code, and reads its CSRF
+    /// token; the clock moves one step on, so the next code is fresh too.
+    pub async fn sign_in(&self, account: &TestAccount) -> Browser {
+        let mut browser = Browser::new();
+        let code = account
+            .nonce
+            .map(|_| self.code(account, 0))
+            .unwrap_or_default();
+        let response = self
+            .login_as(&mut browser, &account.email, PASSWORD, &code)
+            .await;
+        assert_eq!(response.status(), 303, "sign-in of {}", account.email);
+        self.advance(30);
+        let page = self.get_as(&browser, "/admin").await;
+        browser.csrf = csrf_of(&body_text(page).await);
+        browser
+    }
+
+    /// A same-origin GET from `browser`.
+    pub async fn get_as(&self, browser: &Browser, path: &str) -> Response<Body> {
+        let mut builder = request("GET", MAIN_HOST, path);
+        let cookies = browser.cookie_header();
+        if !cookies.is_empty() {
+            builder = builder.header("cookie", cookies);
+        }
+        self.send(from_peer(
+            builder.body(Body::empty()).unwrap(),
+            &browser.peer,
+        ))
+        .await
+    }
+
+    /// A form POST from `browser` with its CSRF token added.
+    pub async fn post_as(
+        &self,
+        browser: &Browser,
+        path: &str,
+        fields: &[(&str, &str)],
+    ) -> Response<Body> {
+        let mut all = vec![("csrf", browser.csrf.as_str())];
+        all.extend_from_slice(fields);
+        self.send(form_request(path, browser, &all)).await
     }
 }

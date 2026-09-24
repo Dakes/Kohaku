@@ -3,16 +3,24 @@
 
 use rusqlite::{Transaction, params};
 
-/// Who acted. Users arrive with `admin-auth`.
+use crate::auth::Role;
+
+/// Who acted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Actor {
     Cli,
+    /// A signed-in account, or one using a token of its own (a reset link).
+    User {
+        id: i64,
+        role: Role,
+    },
 }
 
 impl Actor {
     fn columns(self) -> (&'static str, Option<i64>) {
         match self {
             Actor::Cli => ("cli", None),
+            Actor::User { id, role } => (role.as_str(), Some(id)),
         }
     }
 }
@@ -21,14 +29,40 @@ impl Actor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     InstanceRestore,
+    UserUnlock,
+    UserResetLink,
+    UserPasswordChange,
+    UserPasswordReset,
+    UserTotpEnable,
+    UserTotpDisable,
+    UserRecoveryCodes,
+    UserSessionsEnd,
 }
 
 impl Action {
-    pub const ALL: &'static [Action] = &[Action::InstanceRestore];
+    pub const ALL: &'static [Action] = &[
+        Action::InstanceRestore,
+        Action::UserUnlock,
+        Action::UserResetLink,
+        Action::UserPasswordChange,
+        Action::UserPasswordReset,
+        Action::UserTotpEnable,
+        Action::UserTotpDisable,
+        Action::UserRecoveryCodes,
+        Action::UserSessionsEnd,
+    ];
 
     pub fn identifier(self) -> &'static str {
         match self {
             Action::InstanceRestore => "instance.restore",
+            Action::UserUnlock => "user.unlock",
+            Action::UserResetLink => "user.reset_link",
+            Action::UserPasswordChange => "user.password_change",
+            Action::UserPasswordReset => "user.password_reset",
+            Action::UserTotpEnable => "user.totp_enable",
+            Action::UserTotpDisable => "user.totp_disable",
+            Action::UserRecoveryCodes => "user.recovery_codes",
+            Action::UserSessionsEnd => "user.sessions_end",
         }
     }
 }
@@ -38,14 +72,16 @@ impl Action {
 pub enum Target {
     /// The whole instance; no id.
     Instance,
+    User(i64),
 }
 
 impl Target {
-    pub const TYPES: &'static [&'static str] = &["instance"];
+    pub const TYPES: &'static [&'static str] = &["instance", "user"];
 
     fn columns(self) -> (&'static str, Option<i64>) {
         match self {
             Target::Instance => ("instance", None),
+            Target::User(id) => ("user", Some(id)),
         }
     }
 }

@@ -369,10 +369,11 @@ async fn admin_requests_are_isolated() {
             ("sec-fetch-mode", "navigate"),
         ],
     ];
+    // Passed on to the session guard, which sends a request without a session to login.
     for headers in passed {
         assert_eq!(
             get(headers, "/admin").await,
-            StatusCode::NOT_FOUND,
+            StatusCode::SEE_OTHER,
             "{headers:?}"
         );
     }

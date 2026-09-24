@@ -1,0 +1,69 @@
+{% extends "admin_base.html" %}
+{% macro reauth(form, totp_enrolled) %}
+<label for="{{ form }}_current_password">Current password</label>
+<input id="{{ form }}_current_password" name="current_password" type="password" autocomplete="current-password" required>
+{%- if totp_enrolled %}
+<label for="{{ form }}_code">Code from your authenticator app, or a recovery code</label>
+<input id="{{ form }}_code" name="code" autocomplete="one-time-code" required maxlength="32">
+{%- endif %}
+{% endmacro %}
+{% block title %}Account{% endblock %}
+{% block admin %}
+<h1>Account</h1>
+{%- if let Some(error) = error %}
+<p class="error" role="alert">{{ error }}</p>
+{%- endif %}
+{%- if let Some(notice) = notice %}
+<p class="notice" role="status">{{ notice }}</p>
+{%- endif %}
+<p>{{ nav.email }} ({{ role }})</p>
+
+<h2>Password</h2>
+<form method="post" action="/admin/account/password" class="stacked">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+<label for="new_password">New password (at least 12 characters)</label>
+<input id="new_password" name="new_password" type="password" autocomplete="new-password" required minlength="12" maxlength="1024">
+<label for="new_password_again">New password again</label>
+<input id="new_password_again" name="new_password_again" type="password" autocomplete="new-password" required minlength="12" maxlength="1024">
+{% call reauth("password", totp_enrolled) %}{% endcall %}
+<button type="submit">Change the password</button>
+</form>
+<p>Changing the password signs out every session, this one included.</p>
+
+<h2>Two-factor login</h2>
+{%- if totp_enrolled %}
+<p>On. {{ recovery_left }} unused recovery codes left.</p>
+<form method="post" action="/admin/account/totp" class="stacked">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+{% call reauth("enroll", totp_enrolled) %}{% endcall %}
+<button type="submit">Set up a new authenticator app</button>
+</form>
+<form method="post" action="/admin/account/recovery-codes" class="stacked">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+{% call reauth("codes", totp_enrolled) %}{% endcall %}
+<button type="submit">Make new recovery codes</button>
+</form>
+{%- if !two_factor_required %}
+<form method="post" action="/admin/account/totp/disable" class="stacked">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+{% call reauth("disable", totp_enrolled) %}{% endcall %}
+<button type="submit">Turn two-factor login off</button>
+</form>
+{%- else %}
+<p>Your role requires two-factor login, so it cannot be turned off.</p>
+{%- endif %}
+{%- else %}
+<p>Off. Turn it on with any authenticator app, such as FreeOTP+.</p>
+<form method="post" action="/admin/account/totp" class="stacked">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+{% call reauth("enroll", totp_enrolled) %}{% endcall %}
+<button type="submit">Set up an authenticator app</button>
+</form>
+{%- endif %}
+
+<h2>Sessions</h2>
+<form method="post" action="/admin/account/sessions/end-others" class="stacked">
+<input type="hidden" name="csrf" value="{{ nav.csrf }}">
+<button type="submit">Sign out every other session</button>
+</form>
+{% endblock %}
