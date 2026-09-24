@@ -22,10 +22,11 @@ const OWN_HEADER_ALLOWLIST: &[&str] = &[];
 
 fn harness() -> Harness {
     let harness = Harness::new();
-    harness
-        .app
-        .host_map
-        .replace(HostMap::new(&harness.app.base_url).with_project(PROJECT_HOST, ProjectId(1)));
+    harness.app.host_map.replace(
+        HostMap::new(&harness.app.base_url)
+            .with_project(PROJECT_HOST, ProjectId(1))
+            .with_domain("demo", PROJECT_HOST),
+    );
     harness
 }
 
@@ -51,6 +52,8 @@ fn expected_cache(class: CacheClass, status: StatusCode, method: &str) -> &'stat
             "public, max-age=31536000, immutable"
         }
         CacheClass::StaticAsset => "no-cache",
+        CacheClass::CanonicalRedirect if status == StatusCode::PERMANENT_REDIRECT => "max-age=3600",
+        CacheClass::CanonicalRedirect => "no-store",
     }
 }
 
@@ -108,7 +111,7 @@ async fn route_table_matches_its_declarations() {
         let label = format!("{:?} {:?}", route.host, route.path);
         match route.access {
             Access::Public => {}
-            Access::Session => assert_eq!(route.host, HostKind::Main, "{label}"),
+            Access::Session | Access::Admin => assert_eq!(route.host, HostKind::Main, "{label}"),
         }
         match route.csp {
             Csp::Release => {}
@@ -157,16 +160,34 @@ async fn route_table_matches_its_declarations() {
                 }
                 match route.access {
                     Access::Public => assert_ne!(response.status(), 303, "{what}"),
-                    Access::Session => {
+                    Access::Session | Access::Admin => {
                         assert_eq!(response.status(), 303, "{what}");
                         assert_eq!(header_values(&response, "location"), ["/admin/login"]);
                     }
                 }
             }
-            if route.access == Access::Session {
-                let account = harness.account("m@example.org", "maintainer", false).await;
-                let browser = harness.sign_in(&account).await;
-                let what = format!("{label} GET {host} signed in");
+            if route.access != Access::Public {
+                let maintainer = harness.account("m@example.org", "maintainer", false).await;
+                let browser = harness.sign_in(&maintainer).await;
+                let what = format!("{label} GET {host} as a maintainer");
+                let response = harness.get_as(&browser, &route.example).await;
+                check_headers(&response, route, "GET", &what);
+                match route.access {
+                    Access::Public => unreachable!(),
+                    Access::Session => {
+                        assert_ne!(response.status(), 303, "{what}");
+                        assert!(!response.status().is_server_error(), "{what}");
+                    }
+                    // Exactly what a nonexistent admin path answers.
+                    Access::Admin => {
+                        let missing = harness.get_as(&browser, "/admin/does-not-exist").await;
+                        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{what}");
+                        assert_eq!(body_text(response).await, body_text(missing).await);
+                    }
+                }
+                let admin = harness.account("a@example.org", "admin", true).await;
+                let browser = harness.sign_in(&admin).await;
+                let what = format!("{label} GET {host} as the admin");
                 let response = harness.get_as(&browser, &route.example).await;
                 check_headers(&response, route, "GET", &what);
                 assert_ne!(response.status(), 303, "{what}");
@@ -224,7 +245,7 @@ async fn state_changing_requests_need_the_origin() {
                     .contains(&status),
                     "{label} same-origin POST {host}: {status}"
                 ),
-                Access::Session => {
+                Access::Session | Access::Admin => {
                     assert_eq!(
                         status,
                         StatusCode::FORBIDDEN,
@@ -236,10 +257,11 @@ async fn state_changing_requests_need_the_origin() {
     }
 }
 
-/// Every state-changing request of a `Session` route needs the session's CSRF token.
+/// Every state-changing request of a `Session` or `Admin` route needs the session's
+/// CSRF token; an `Admin` route answers any other account 404 even with it.
 #[tokio::test]
 async fn session_posts_need_the_csrf_token() {
-    for route in table().into_iter().filter(|r| r.access == Access::Session) {
+    for route in table().into_iter().filter(|r| r.access != Access::Public) {
         let label = format!("{:?}", route.path);
         let harness = harness();
         let account = harness.account("m@example.org", "maintainer", false).await;
@@ -263,10 +285,24 @@ async fn session_posts_need_the_csrf_token() {
         }
         let response = harness.post_as(&browser, &route.example, &[]).await;
         let status = response.status();
-        assert!(
-            status != StatusCode::FORBIDDEN && !status.is_server_error(),
-            "{label}: {status}"
-        );
+        if route.access == Access::Admin {
+            assert_eq!(status, StatusCode::NOT_FOUND, "{label}");
+            let admin = harness.account("a@example.org", "admin", true).await;
+            let browser = harness.sign_in(&admin).await;
+            let status = harness
+                .post_as(&browser, &route.example, &[])
+                .await
+                .status();
+            assert!(
+                status != StatusCode::FORBIDDEN && !status.is_server_error(),
+                "{label} as the admin: {status}"
+            );
+        } else {
+            assert!(
+                status != StatusCode::FORBIDDEN && !status.is_server_error(),
+                "{label}: {status}"
+            );
+        }
     }
 }
 

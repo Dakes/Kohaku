@@ -313,6 +313,15 @@ const SHIPPED_SAMPLES: Samples = &[
              VALUES ('reset', zeroblob(32), 7, 3)",
         ),
     ),
+    (
+        "projects",
+        Some(
+            "INSERT INTO projects (slug, name, public_host, screenshots_enabled,
+                 privacy_notice, security_contact, next_number, created_at)
+             VALUES ('demo', 'Demo app', 'bugs.example.net', 1, 'Line one\nline two',
+                 'security@example.net', 13, 1)",
+        ),
+    ),
 ];
 
 /// Migrates a new database to each version k, inserts a sample row into every table,

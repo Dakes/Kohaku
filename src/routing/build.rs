@@ -16,7 +16,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, MatchedPath, Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
-use axum::middleware::{Next, from_fn_with_state};
+use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use tower::util::BoxCloneSyncService;
 use tower::{Service, ServiceBuilder, ServiceExt};
@@ -40,6 +40,9 @@ use crate::logging::{Reason, Rejected};
 pub struct HashedAsset;
 
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+
+/// A browser follows a moved domain's old redirect for at most an hour (design §6).
+pub const REDIRECT_MAX_AGE: &str = "max-age=3600";
 
 /// The whole HTTP service: header layer over the dispatcher.
 pub type Service_ = BoxCloneSyncService<Request, Response, Infallible>;
@@ -123,6 +126,12 @@ fn layered(route: Route, app: &AppState) -> axum::routing::MethodRouter<AppState
             Arc::clone(app),
             crate::auth::session::layer,
         )),
+        Access::Admin => methods
+            .layer::<_, Infallible>(from_fn(crate::auth::session::admin_layer))
+            .layer::<_, Infallible>(from_fn_with_state(
+                Arc::clone(app),
+                crate::auth::session::layer,
+            )),
     };
     let methods = methods
         .layer::<_, Infallible>(DefaultBodyLimit::max(cap))
@@ -162,6 +171,13 @@ async fn cache_layer(
                 && response.status() == StatusCode::OK
                 && (method == Method::GET || method == Method::HEAD);
             if hashed { IMMUTABLE } else { "no-cache" }
+        }
+        CacheClass::CanonicalRedirect => {
+            if response.status() == StatusCode::PERMANENT_REDIRECT {
+                REDIRECT_MAX_AGE
+            } else {
+                "no-store"
+            }
         }
     };
     let headers = response.headers_mut();

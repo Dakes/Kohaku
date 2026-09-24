@@ -130,6 +130,32 @@ for command in unlock reset-password; do
     [ ! -s "$work/admin.out" ] || fail "admin $command wrote to stdout"
 done
 
+# A project created beside serve: its domain reaches the running server's host map, gets
+# a certificate from Caddy's local CA, and old main-host links follow it with a 308.
+project_host=bugs.smoke.test
+compose exec -T kohaku kohaku project create demo --name 'Smoke demo' --host "$project_host" \
+    > "$work/project.out" 2> "$work/project.err" || fail "project create: $(cat "$work/project.err")"
+[ ! -s "$work/project.out" ] || fail "project create wrote to stdout"
+if compose exec -T kohaku kohaku project create demo --name 'Smoke demo' 2> "$work/project.err"; then
+    fail "project create accepted a taken slug"
+fi
+grep -q 'slug is taken' "$work/project.err" || fail "project create: $(cat "$work/project.err")"
+stylesheet=$(grep -o '/static/kohaku\.[0-9a-f]*\.css' "$work/landing" | head -n 1)
+[ -n "$stylesheet" ] || fail "the landing page names no stylesheet"
+curl_project() {
+    curl --silent --show-error --noproxy '*' --cacert "$work/root.crt" \
+        --resolve "$project_host:443:127.0.0.1" "$@"
+}
+for _ in $(seq 1 30); do
+    curl_project --fail --output /dev/null "https://$project_host$stylesheet" 2>/dev/null && break
+    sleep 1
+done
+curl_project --fail --output /dev/null "https://$project_host$stylesheet" \
+    || fail "the project host serves no asset over TLS"
+redirect=$(curl_main --output /dev/null --write-out '%{http_code} %{redirect_url}' \
+    "https://$domain/p/demo/r/1?x=1")
+[ "$redirect" = "308 https://$project_host/r/1?x=1" ] || fail "/p/demo: $redirect"
+
 # Forged X-Forwarded-For through Caddy: every request still counts against the client's
 # own read budget (300 per minute), so a burst of 400 ends in 429s.
 : > "$work/burst.conf"

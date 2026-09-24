@@ -268,6 +268,7 @@ fn target_table(target: Target) -> Option<&'static str> {
     match target {
         Target::Instance => None,
         Target::User(_) => Some("users"),
+        Target::Project(_) => Some("projects"),
     }
 }
 
@@ -289,6 +290,7 @@ fn audited_kinds_live_in_autoincrement_tables() {
     let tables: Vec<&str> = [
         target_table(Target::Instance),
         target_table(Target::User(1)),
+        target_table(Target::Project(1)),
         actor_table(Actor::Cli),
         actor_table(user),
     ]
@@ -375,6 +377,10 @@ async fn anonymous_request_flood_records_nothing() {
             "/",
             "/admin",
             "/admin/x",
+            "/admin/projects",
+            "/admin/p/demo/settings",
+            "/admin/p/demo/delete",
+            "/p/demo",
             "/items/1",
             "/nothing",
             "/healthz",

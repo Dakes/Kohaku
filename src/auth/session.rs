@@ -174,6 +174,15 @@ pub async fn layer(State(app): State<AppState>, request: Request, next: Next) ->
     next.run(request).await
 }
 
+/// Per-entry layer of every `Admin` route, inside [`layer`]: any account but the admin
+/// gets the 404 of a nonexistent path.
+pub async fn admin_layer(request: Request, next: Next) -> Response {
+    match request.extensions().get::<SessionUser>() {
+        Some(user) if user.role == Role::Admin => next.run(request).await,
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 /// The request with its body put back when its form's `csrf` field is the session's
 /// token; `None` otherwise. The body cap has already bounded the body.
 async fn check_csrf(request: Request, expected: &[u8; KEY_BYTES]) -> Option<Request> {

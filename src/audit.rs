@@ -37,6 +37,9 @@ pub enum Action {
     UserTotpDisable,
     UserRecoveryCodes,
     UserSessionsEnd,
+    ProjectCreate,
+    ProjectUpdate,
+    ProjectDelete,
 }
 
 impl Action {
@@ -50,6 +53,9 @@ impl Action {
         Action::UserTotpDisable,
         Action::UserRecoveryCodes,
         Action::UserSessionsEnd,
+        Action::ProjectCreate,
+        Action::ProjectUpdate,
+        Action::ProjectDelete,
     ];
 
     pub fn identifier(self) -> &'static str {
@@ -63,6 +69,9 @@ impl Action {
             Action::UserTotpDisable => "user.totp_disable",
             Action::UserRecoveryCodes => "user.recovery_codes",
             Action::UserSessionsEnd => "user.sessions_end",
+            Action::ProjectCreate => "project.create",
+            Action::ProjectUpdate => "project.update",
+            Action::ProjectDelete => "project.delete",
         }
     }
 }
@@ -73,15 +82,17 @@ pub enum Target {
     /// The whole instance; no id.
     Instance,
     User(i64),
+    Project(i64),
 }
 
 impl Target {
-    pub const TYPES: &'static [&'static str] = &["instance", "user"];
+    pub const TYPES: &'static [&'static str] = &["instance", "user", "project"];
 
     fn columns(self) -> (&'static str, Option<i64>) {
         match self {
             Target::Instance => ("instance", None),
             Target::User(id) => ("user", Some(id)),
+            Target::Project(id) => ("project", Some(id)),
         }
     }
 }

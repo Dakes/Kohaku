@@ -3,6 +3,9 @@
 <nav class="admin">
 <a href="/admin">Kohaku</a>
 <span class="who">{{ nav.email }}</span>
+{%- if nav.admin %}
+<a href="/admin/projects">Projects</a>
+{%- endif %}
 <a href="/admin/account">Account</a>
 <form method="post" action="/admin/logout" class="inline">
 <input type="hidden" name="csrf" value="{{ nav.csrf }}">

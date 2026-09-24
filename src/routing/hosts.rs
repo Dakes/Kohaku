@@ -1,12 +1,17 @@
-//! Host normalization, the in-memory host map and its entries (host-routing; change
-//! foundation D15).
+//! Host normalization, the in-memory host map, its entries and its rebuilds
+//! (host-routing; change foundation D15, change projects D4).
 
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};
+use std::time::{Duration, Instant};
 
 use axum::http::{HeaderMap, header};
+use rusqlite::Connection;
+use tokio::sync::watch;
 
+use super::AppState;
 use crate::config::BaseUrl;
+use crate::db::migrate::DbFailure;
 
 /// A project's id, the only thing a project router is bound to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,18 +49,23 @@ pub fn request_host(headers: &HeaderMap) -> Option<String> {
     Some(normalize(text))
 }
 
-/// Normalized host → entry. Only the main host in this change; `projects` adds its
-/// hosts.
+/// Normalized host → entry, and slug → custom domain for the canonical redirect;
+/// built from `projects` (D4), so routing never queries the database.
 #[derive(Debug, Clone)]
 pub struct HostMap {
     entries: HashMap<String, HostEntry>,
+    domains: HashMap<String, String>,
 }
 
 impl HostMap {
+    /// The main host alone.
     pub fn new(base_url: &BaseUrl) -> HostMap {
         let mut entries = HashMap::new();
         entries.insert(base_url.host().as_str().to_owned(), HostEntry::Main);
-        HostMap { entries }
+        HostMap {
+            entries,
+            domains: HashMap::new(),
+        }
     }
 
     /// Adds a project host; the name must already be a validated DNS name.
@@ -65,17 +75,39 @@ impl HostMap {
         self
     }
 
+    /// Adds project `slug`'s custom domain for the canonical redirect.
+    pub fn with_domain(mut self, slug: &str, host: &str) -> HostMap {
+        self.domains.insert(slug.to_owned(), host.to_owned());
+        self
+    }
+
     pub fn get(&self, normalized_host: &str) -> Option<HostEntry> {
         self.entries.get(normalized_host).copied()
     }
 
-    /// The configured project host names of `project`.
-    pub fn project_host(&self, project: ProjectId) -> Option<&str> {
-        self.entries
-            .iter()
-            .find(|(_, entry)| **entry == HostEntry::Project(project))
-            .map(|(host, _)| host.as_str())
+    /// The custom domain of the project with `slug`, if it has one.
+    pub fn domain(&self, slug: &str) -> Option<&str> {
+        self.domains.get(slug).map(String::as_str)
     }
+}
+
+/// The map of the main host and every project with a custom domain in `conn`.
+pub fn load(conn: &Connection, base_url: &BaseUrl) -> rusqlite::Result<HostMap> {
+    let mut statement =
+        conn.prepare("SELECT id, slug, public_host FROM projects WHERE public_host IS NOT NULL")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            ProjectId(row.get(0)?),
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut map = HostMap::new(base_url);
+    for row in rows {
+        let (id, slug, host) = row?;
+        map = map.with_project(&host, id).with_domain(&slug, &host);
+    }
+    Ok(map)
 }
 
 /// The host map shared by every request; a rebuild swaps the whole map.
@@ -97,6 +129,63 @@ impl SharedHostMap {
 
     pub fn replace(&self, map: HostMap) {
         *self.map.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(map);
+    }
+}
+
+/// How often the watcher looks for changes made by another connection.
+pub const WATCH_EVERY: Duration = Duration::from_secs(2);
+
+/// A failed rebuild is logged at most this often.
+const FAILURE_LOG_EVERY: Duration = Duration::from_secs(60);
+
+/// Rebuilds the host map from the database on the watcher connection. Called after
+/// every committed project change; a failure keeps the old map.
+pub async fn refresh(app: &AppState) -> Result<(), DbFailure> {
+    let (shared, base_url) = (Arc::clone(&app.host_map), app.base_url.clone());
+    app.db
+        .with_watcher(move |conn| {
+            shared.replace(load(conn, &base_url)?);
+            Ok(())
+        })
+        .await
+}
+
+/// Rebuilds the map whenever `PRAGMA data_version` shows a commit by another
+/// connection, checking every [`WATCH_EVERY`] until `stop` changes.
+pub async fn watch(app: AppState, mut stop: watch::Receiver<()>) {
+    let mut seen: Option<i64> = None;
+    let mut last_failure_log: Option<Instant> = None;
+    let mut ticks = tokio::time::interval(WATCH_EVERY);
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = stop.changed() => return,
+            _ = ticks.tick() => {}
+        }
+        let (shared, base_url) = (Arc::clone(&app.host_map), app.base_url.clone());
+        let result = app
+            .db
+            .with_watcher(move |conn| -> rusqlite::Result<i64> {
+                let version: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+                if seen != Some(version) {
+                    shared.replace(load(conn, &base_url)?);
+                }
+                Ok(version)
+            })
+            .await;
+        match result {
+            // Only a successful rebuild moves on; a failed one is retried next time.
+            Ok(version) => seen = Some(version),
+            Err(error) => {
+                if last_failure_log.is_none_or(|at| at.elapsed() >= FAILURE_LOG_EVERY) {
+                    tracing::error!(
+                        "cannot rebuild the host map, keeping the old one: {}",
+                        DbFailure::from(error)
+                    );
+                    last_failure_log = Some(Instant::now());
+                }
+            }
+        }
     }
 }
 

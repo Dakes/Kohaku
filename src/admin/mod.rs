@@ -3,6 +3,7 @@
 
 pub mod account;
 pub mod login;
+pub mod projects;
 pub mod reset;
 
 use askama::Template;
@@ -11,15 +12,18 @@ use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-use crate::auth::AuthError;
 use crate::auth::session::{LOGIN_PATH, SessionUser, expired_session_cookie, see_other};
+use crate::auth::{AuthError, Role};
 use crate::pages::{Chrome, html};
+use crate::projects::Project;
 use crate::routing::AppState;
 
 /// What `admin_base.html` shows of the signed-in account.
 pub struct Nav {
     pub email: String,
     pub csrf: String,
+    /// Shows the project administration links.
+    pub admin: bool,
 }
 
 impl Nav {
@@ -27,6 +31,7 @@ impl Nav {
         Nav {
             email: user.email.clone(),
             csrf: user.csrf_field(),
+            admin: user.role == Role::Admin,
         }
     }
 }
@@ -44,15 +49,33 @@ struct Home {
     nav: Nav,
     role: &'static str,
     totp_enrolled: bool,
+    /// Every project, for the admin only.
+    projects: Vec<Project>,
 }
 
-/// `GET /admin`: the signed-in home.
-pub async fn home(Extension(user): Extension<SessionUser>) -> Response {
+/// `GET /admin`: the signed-in home; the admin's lists every project.
+pub async fn home(
+    State(app): State<AppState>,
+    Extension(user): Extension<SessionUser>,
+) -> Response {
+    let projects = if user.role == Role::Admin {
+        let listed = app
+            .db
+            .read(|conn| crate::projects::list(conn).map_err(AuthError::from))
+            .await;
+        match listed {
+            Ok(projects) => projects,
+            Err(error) => return server_error(&error),
+        }
+    } else {
+        Vec::new()
+    };
     html(&Home {
         chrome: Chrome::new(),
         nav: Nav::of(&user),
         role: user.role.as_str(),
         totp_enrolled: user.totp_enrolled,
+        projects,
     })
 }
 

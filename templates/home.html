@@ -6,4 +6,17 @@
 {%- if !totp_enrolled %}
 <p class="notice">Two-factor login is off for this account. <a href="/admin/account">Turn it on</a>.</p>
 {%- endif %}
+{%- if nav.admin %}
+<h2>Projects</h2>
+{%- if projects.is_empty() %}
+<p>No projects yet. <a href="/admin/projects">Create one</a>.</p>
+{%- else %}
+<ul>
+{%- for project in projects %}
+<li><a href="/admin/p/{{ project.slug }}/settings">{{ project.settings.name }}</a> ({{ project.slug }}{% if let Some(host) = project.settings.public_host %}, {{ host }}{% endif %})</li>
+{%- endfor %}
+</ul>
+<p><a href="/admin/projects">Manage projects</a></p>
+{%- endif %}
+{%- endif %}
 {% endblock %}

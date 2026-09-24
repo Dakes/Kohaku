@@ -219,6 +219,36 @@ docker compose exec kohaku kohaku admin reset-password --email you@example.org  
 `reset-password` prints a one-hour link and mails nothing; open it to set a new
 password. Both commands are recorded in the audit log.
 
+## Projects
+
+Every report belongs to a project. The admin creates, changes and deletes projects under
+**Projects** in the admin area; maintainers never see these pages. A project has:
+
+- a **slug** (`a-z`, `0-9` and `-`, at most 40 characters) used in its paths. It cannot
+  be changed later, because links and API clients depend on it;
+- a **name**, shown to reporters;
+- optionally a **custom domain**, a privacy notice and a security contact;
+- **switches**: screenshots, feature requests, required email verification (all off at
+  first) and +1 votes (on at first).
+
+Projects can also be created from the command line, for scripted setups:
+
+```sh
+docker compose exec kohaku kohaku project create demo --name "Demo app" --host bugs.example.org
+```
+
+`--host` is optional. The command refuses a taken slug or domain and exits 1.
+
+**Custom domains:** point the domain's DNS at the server first, then enter it in the
+project settings (or pass `--host`). It works as soon as the change is saved, or within
+2 seconds when made from the command line. Caddy gets its certificate on the first
+visit. Links to `https://<main domain>/p/<slug>/…` then redirect to the project's domain,
+except the API under `/p/<slug>/api/`. Browsers may cache that redirect for an hour, so
+after moving a project to another domain, old links can take up to an hour to follow.
+
+**Deleting a project** deletes its reports and everything else stored for it. To
+confirm, you type its slug. Only restoring a backup brings a deleted project back.
+
 ## Configuration
 
 Kohaku reads its settings only from environment variables (with Compose: `.env`). There
@@ -226,7 +256,8 @@ is no configuration file and no setting on the command line. Values are used exa
 written, never trimmed or corrected. On a problem Kohaku lists every broken setting and
 exits before touching the data directory. A required setting set to the empty string
 counts as missing. Commands other than `serve` read only what they need: `backup` and
-`admin unlock` only `KOHAKU_SECRET`, `admin reset-password` also `KOHAKU_BASE_URL`.
+`admin unlock` only `KOHAKU_SECRET`, `admin reset-password` and `project create` also
+`KOHAKU_BASE_URL`.
 
 | Setting | | Format |
 |---|---|---|
